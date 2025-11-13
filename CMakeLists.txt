@@ -28,27 +28,30 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(blink C CXX ASM)
+project(pca9685 C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
-add_executable(blink
-    blink.c
+add_executable(pca9685
+    pca9685.c
 )
 
 # Dépendances communes
-target_link_libraries(blink pico_stdlib)
+target_link_libraries(pca9685 
+    pico_stdlib 
+    hardware_i2c
+)
 
 if (PICO_CYW43_SUPPORTED)
-    target_link_libraries(blink pico_cyw43_arch_none)
+    target_link_libraries(pca9685 pico_cyw43_arch_none)
 endif()
 
 # === Clé pour avoir pico/stdio_usb.h et la CDC USB ===
-pico_enable_stdio_usb(blink 1)   # active stdin/stdout via USB
-pico_enable_stdio_uart(blink 0)  # (optionnel) coupe l’UART
+pico_enable_stdio_usb(pca9685 1)   # active stdin/stdout via USB
+pico_enable_stdio_uart(pca9685 0)  # (optionnel) coupe l’UART
 
 # Fichiers .uf2/.bin/.map etc.
-pico_add_extra_outputs(blink)
+pico_add_extra_outputs(pca9685)
 
