@@ -1,868 +1,311 @@
-// Code for team Onee~Chan - GC Valobot - Robopoly 2025 - 2026
-// Author: Jérôme ESSOLA ELANGA - jerome.essolaelanga@epfl.ch
-// Team members: Jérôme ESSOLA ELANGA [Alone :( ]
-
-#include <math.h>
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include "hardware/pwm.h"
+#include "pico/stdio_usb.h"   // pour désactiver CRLF
 
-#define I2C_PORT      i2c0
-#define I2C_SDA_PIN   4      // GP4
-#define I2C_SCL_PIN   5      // GP5
-#define PCA_ADDR      0x40   // adresse par défaut
+// -----------------------------------------------------------------------------
+// Config debug
+// -----------------------------------------------------------------------------
+#define USE_TEST_PATTERN 0  // 1 = dégradé de test, 0 = vraie caméra
 
-// Registres PCA9685
-#define MODE1         0x00
-#define MODE2         0x01
-#define PRE_SCALE     0xFE
-#define LED0_ON_L     0x06   // LEDn_ON_L = 0x06 + 4*n
+// -----------------------------------------------------------------------------
+// Paramètres image
+// -----------------------------------------------------------------------------
+#define IMG_WIDTH   160
+#define IMG_HEIGHT  120
 
-#define COXA_FL 2
-#define COXA_FR 12
-#define COXA_BL 13
-#define COXA_BR 3
- 
-#define TROC_FL 5
-#define TROC_FR 8
-#define TROC_BL 4
-#define TROC_BR 9
+// -----------------------------------------------------------------------------
+// Brochage
+// -----------------------------------------------------------------------------
+#define PIN_I2C_SDA   4
+#define PIN_I2C_SCL   5
 
+#define PIN_D0        6
+#define PIN_D1        7
+#define PIN_D2        8
+#define PIN_D3        9
+#define PIN_D4        10
+#define PIN_D5        11
+#define PIN_D6        12
+#define PIN_D7        13
 
-bool debug = false;
-bool initialize = true;
+#define PIN_PCLK      14   // PLK
+#define PIN_VSYNC     15   // VS
+#define PIN_HREF      16   // HS
+#define PIN_XCLK      17   // XLK
 
-// Convertit des microsecondes en ticks (sur 12 bits)
-static inline uint16_t to_ticks_us(int us, float us_per_tick) {
-    return (uint16_t)( (us / us_per_tick) + 0.5f ); // arrondi au plus proche
-}
+// -----------------------------------------------------------------------------
+// Adresse I2C OV7670 (7 bits)
+// -----------------------------------------------------------------------------
+#define OV7670_ADDR  0x21
 
-static void pca_write8(uint8_t reg, uint8_t val) {
+// Registres utiles
+#define REG_COM7     0x12
+#define REG_COM15    0x40
+#define REG_TSLB     0x3A
+#define REG_CLKRC    0x11
+#define REG_COM3     0x0C
+#define REG_COM14    0x3E
+#define REG_SCALING_XSC 0x70
+#define REG_SCALING_YSC 0x71
+#define REG_SCALING_DCWCTR 0x72
+#define REG_SCALING_PCLK_DIV 0x73
+#define REG_SCALING_PCLK_DELAY 0xA2
+
+#define REG_COM11    0x3B
+#define REG_HSTART   0x17
+#define REG_HSTOP    0x18
+#define REG_HREF     0x32
+#define REG_VSTART   0x19
+#define REG_VSTOP    0x1A
+#define REG_VREF     0x03
+
+// -----------------------------------------------------------------------------
+// Protocole USB
+// -----------------------------------------------------------------------------
+static const char FRAME_MAGIC_START[4] = {'O','V','F','0'};
+#define FRAME_VERSION  1
+
+// -----------------------------------------------------------------------------
+// I2C : écriture d'un registre OV7670
+// -----------------------------------------------------------------------------
+static void ov7670_write_reg(uint8_t reg, uint8_t val) {
     uint8_t buf[2] = {reg, val};
-    (void)i2c_write_blocking(I2C_PORT, PCA_ADDR, buf, 2, false);
+    i2c_write_blocking(i2c0, OV7670_ADDR, buf, 2, false);
 }
 
-static void pca_write_pwm(uint8_t channel, uint16_t on, uint16_t off) {
-    uint8_t reg = LED0_ON_L + 4 * channel;
-    uint8_t buf[5] = {reg, on & 0xFF, on >> 8, off & 0xFF, off >> 8};
-    (void)i2c_write_blocking(I2C_PORT, PCA_ADDR, buf, 5, false);
+// -----------------------------------------------------------------------------
+// Init OV7670 : QQVGA (160x120) RGB565
+// -----------------------------------------------------------------------------
+static void ov7670_init(void) {
+    // Reset
+    ov7670_write_reg(REG_COM7, 0x80); // Reset
+    sleep_ms(100);
+
+    // Horloge interne
+    ov7670_write_reg(REG_CLKRC, 0x80); // internal PLL, prescale
+
+    // COM11 : auto 50/60Hz + timing expo
+    ov7670_write_reg(REG_COM11, 0x0A);
+
+    // Format RGB
+    ov7670_write_reg(REG_COM7, 0x04);  // RGB, base
+
+    // RGB565
+    ov7670_write_reg(REG_TSLB, 0x04);
+    ov7670_write_reg(REG_COM15, 0xD0); // RGB565, full range
+
+    // Downsampling + scaling
+    ov7670_write_reg(REG_COM3, 0x04);   // DCW enable
+    ov7670_write_reg(REG_COM14, 0x1A);  // PCLK/4, scaling manuel
+
+    // Scaling pour QQVGA
+    ov7670_write_reg(REG_SCALING_XSC, 0x3A);
+    ov7670_write_reg(REG_SCALING_YSC, 0x35);
+    ov7670_write_reg(REG_SCALING_DCWCTR, 0x22);   // 2x2 downsample
+    ov7670_write_reg(REG_SCALING_PCLK_DIV, 0xF2);
+    ov7670_write_reg(REG_SCALING_PCLK_DELAY, 0x02);
+
+    // Fenêtre
+    ov7670_write_reg(REG_HSTART, 24);
+    ov7670_write_reg(REG_HSTOP,  6);
+    ov7670_write_reg(REG_HREF,   36);
+
+    ov7670_write_reg(REG_VSTART, 2);
+    ov7670_write_reg(REG_VSTOP,  122);
+    ov7670_write_reg(REG_VREF,   0);
+
+    // Réglages couleur de base
+    ov7670_write_reg(0xB0, 0x84);
+    ov7670_write_reg(0x4F, 0x80);
+    ov7670_write_reg(0x50, 0x80);
+    ov7670_write_reg(0x51, 0x00);
+    ov7670_write_reg(0x52, 0x22);
+    ov7670_write_reg(0x53, 0x5E);
+    ov7670_write_reg(0x54, 0x80);
+    ov7670_write_reg(0x58, 0x9E);
+
+    // AWB
+    ov7670_write_reg(0x13, 0xE7);
+    ov7670_write_reg(0x6F, 0x9F);
+
+    sleep_ms(200);
 }
 
-static uint8_t pca_read8(uint8_t reg) {
-    uint8_t val;
-    i2c_write_blocking(I2C_PORT, PCA_ADDR, &reg, 1, true);
-    i2c_read_blocking(I2C_PORT, PCA_ADDR, &val, 1, false);
-    return val;
+// -----------------------------------------------------------------------------
+// Génération de XCLK via PWM
+// -----------------------------------------------------------------------------
+static void xclk_init(void) {
+    gpio_set_function(PIN_XCLK, GPIO_FUNC_PWM);
+    uint slice = pwm_gpio_to_slice_num(PIN_XCLK);
+
+    pwm_set_wrap(slice, 1);
+    pwm_set_clkdiv(slice, 10.4f);
+    pwm_set_gpio_level(PIN_XCLK, 1); // 50% duty
+    pwm_set_enabled(slice, true);
 }
 
-/* static void pca_set_freq(float freq_hz) {
-    // prescale = round(25MHz / (4096 * freq)) - 1
-    float prescale_f = 25000000.0f / (4096.0f * freq_hz) - 1.0f;
-    uint8_t prescale = (uint8_t)floorf(prescale_f + 0.5f);
+// -----------------------------------------------------------------------------
+// Init des GPIO
+// -----------------------------------------------------------------------------
+static void camera_pins_init(void) {
+    for (int pin = PIN_D0; pin <= PIN_D7; ++pin) {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_IN);
+        gpio_disable_pulls(pin);
+    }
 
-    uint8_t oldmode = pca_read8(MODE1);
-    uint8_t sleep = (oldmode & 0x7F) | 0x10;   // sleep
-    pca_write8(MODE1, sleep);
-    pca_write8(PRE_SCALE, prescale);
-    pca_write8(MODE1, oldmode);                // wake
-    sleep_ms(5);
-    pca_write8(MODE1, oldmode | 0xA1);         // auto-increment + restart
-    pca_write8(MODE2, 0x04);                   // OUTDRV=1 (totem-pole)
-} */
+    gpio_init(PIN_PCLK);
+    gpio_set_dir(PIN_PCLK, GPIO_IN);
+    gpio_disable_pulls(PIN_PCLK);
 
-static void pca_set_freq(float freq_hz) {
-    // prescale = round(25MHz / (4096 * freq)) - 1
-    float prescale_f = 25000000.0f / (4096.0f * freq_hz) - 1.0f;
-    uint8_t prescale = (uint8_t)(prescale_f + 0.5f);
+    gpio_init(PIN_VSYNC);
+    gpio_set_dir(PIN_VSYNC, GPIO_IN);
+    gpio_disable_pulls(PIN_VSYNC);
 
-    // Lire l'état actuel
-    uint8_t oldmode = pca_read8(MODE1);
-
-    // Mettre en SLEEP pour pouvoir écrire PRE_SCALE
-    uint8_t sleep = (oldmode & ~0x80) | 0x10; // clear RESTART (bit7), set SLEEP (bit4)
-    pca_write8(MODE1, sleep);
-    sleep_ms(1);
-
-    // Programmer le prescaler
-    pca_write8(PRE_SCALE, prescale);
-
-    // Réveiller (SLEEP=0) en restaurant oldmode sans le bit SLEEP
-    uint8_t wake = oldmode & ~0x10;
-    pca_write8(MODE1, wake);
-    sleep_ms(5);
-
-    // Activer AI (auto-increment) + ALLCALL si tu veux + lancer un RESTART
-    uint8_t run = (wake | 0x20 | 0x01); // AI=0x20, ALLCALL=0x01
-    pca_write8(MODE1, run | 0x80);      // écrire RESTART=1
-    sleep_ms(1);
-
-    // Sorties en totem-pole
-    pca_write8(MODE2, 0x04);
-
-    // DEBUG: relire et afficher
-    uint8_t m1 = pca_read8(MODE1);
-    uint8_t m2 = pca_read8(MODE2);
-    uint8_t ps = pca_read8(PRE_SCALE);
-    printf("After init: MODE1=0x%02X MODE2=0x%02X PRESCALE=0x%02X\r\n", m1, m2, ps);
+    gpio_init(PIN_HREF);
+    gpio_set_dir(PIN_HREF, GPIO_IN);
+    gpio_disable_pulls(PIN_HREF);
 }
 
+// Lecture rapide du bus D0..D7
+static inline uint8_t read_data_bus(void) {
+    uint32_t all = gpio_get_all();
+    return (uint8_t)((all >> PIN_D0) & 0xFF);
+}
 
-static void i2c_scan(void) {
-    printf("I2C scan:\r\n");
-    for (uint8_t addr = 0x03; addr <= 0x77; addr++) {
-        uint8_t dummy = 0;
-        int r = i2c_write_blocking(I2C_PORT, addr, &dummy, 1, false);
-        if (r >= 0) printf(" - Found device at 0x%02X\r\n", addr);
+// -----------------------------------------------------------------------------
+// Motif de test
+// -----------------------------------------------------------------------------
+static void fill_test_pattern(uint16_t *buf) {
+    for (int y = 0; y < IMG_HEIGHT; ++y) {
+        for (int x = 0; x < IMG_WIDTH; ++x) {
+            uint8_t r8 = (x * 255) / IMG_WIDTH;
+            uint8_t g8 = (y * 255) / IMG_HEIGHT;
+            uint8_t b8 = 0;
+
+            uint16_t r = (r8 >> 3) & 0x1F;
+            uint16_t g = (g8 >> 2) & 0x3F;
+            uint16_t b = (b8 >> 3) & 0x1F;
+
+            uint16_t pixel = (r << 11) | (g << 5) | b;
+            buf[y * IMG_WIDTH + x] = pixel;
+        }
     }
 }
 
+// -----------------------------------------------------------------------------
+// Capture d'une frame RGB565
+// -----------------------------------------------------------------------------
+static void capture_frame(uint16_t *buf) {
+    const int max_pixels = IMG_WIDTH * IMG_HEIGHT;
+    int pixel_count = 0;
+
+    // 1) Attendre un front montant de VSYNC
+    int prev_vsync = gpio_get(PIN_VSYNC);
+    while (true) {
+        int v = gpio_get(PIN_VSYNC);
+        if (!prev_vsync && v) {
+            break;
+        }
+        prev_vsync = v;
+        tight_loop_contents();
+    }
+
+    // 2) Attendre que VSYNC retombe à 0
+    while (gpio_get(PIN_VSYNC)) {
+        tight_loop_contents();
+    }
+
+    // 3) Lire lignes tant que VSYNC bas
+    while (!gpio_get(PIN_VSYNC) && pixel_count < max_pixels) {
+        // Attendre début de ligne
+        while (!gpio_get(PIN_HREF)) {
+            if (gpio_get(PIN_VSYNC)) {
+                goto end;
+            }
+            tight_loop_contents();
+        }
+
+        // 4) Lire pixels tant que HREF haut
+        while (gpio_get(PIN_HREF) && !gpio_get(PIN_VSYNC) && pixel_count < max_pixels) {
+            while (!gpio_get(PIN_PCLK)) tight_loop_contents();
+            uint8_t hi = read_data_bus();
+            while (gpio_get(PIN_PCLK)) tight_loop_contents();
+
+            while (!gpio_get(PIN_PCLK)) tight_loop_contents();
+            uint8_t lo = read_data_bus();
+            while (gpio_get(PIN_PCLK)) tight_loop_contents();
+
+            uint16_t pixel = ((uint16_t)hi << 8) | lo;
+            buf[pixel_count++] = pixel;
+        }
+    }
+
+end:
+    for (int i = pixel_count; i < max_pixels; ++i) {
+        buf[i] = 0;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Envoi USB
+// -----------------------------------------------------------------------------
+static void send_frame_usb(uint16_t *buf) {
+    uint16_t width = IMG_WIDTH;
+    uint16_t height = IMG_HEIGHT;
+    uint32_t payload_len = (uint32_t)IMG_WIDTH * (uint32_t)IMG_HEIGHT * 2;
+
+    uint32_t sum = 0;
+    for (int i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i) {
+        sum += buf[i];
+    }
+    uint16_t checksum = (uint16_t)(sum & 0xFFFF);
+
+    fwrite(FRAME_MAGIC_START, 1, 4, stdout);
+    fwrite((uint8_t[]){FRAME_VERSION}, 1, 1, stdout);
+    fwrite(&width, 1, 2, stdout);
+    fwrite(&height, 1, 2, stdout);
+    fwrite(&payload_len, 1, 4, stdout);
+    fwrite(&checksum, 1, 2, stdout);
+
+    fwrite(buf, 2, IMG_WIDTH * IMG_HEIGHT, stdout);
+
+    fflush(stdout);
+}
+
+// -----------------------------------------------------------------------------
+// main()
+// -----------------------------------------------------------------------------
 int main() {
     stdio_init_all();
+    stdio_set_translate_crlf(&stdio_usb, false);
+    setvbuf(stdout, NULL, _IONBF, 0);
 
-    // Init I2C à 400 kHz
-    i2c_init(I2C_PORT, 400 * 1000);
-    gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
-    gpio_pull_up(I2C_SDA_PIN);
-    gpio_pull_up(I2C_SCL_PIN);
+    sleep_ms(2000);
 
-    i2c_scan();
+    i2c_init(i2c0, 100 * 1000);
+    gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(PIN_I2C_SDA);
+    gpio_pull_up(PIN_I2C_SCL);
 
-    // Config PCA9685 à 50 Hz (servos)
-    pca_set_freq(50.0f);
+    xclk_init();
+    camera_pins_init();
+    ov7670_init();
 
-    // 50 Hz -> période = 20 000 us ; 4096 ticks par période
-    // us_par_tick ≈ 20000 / 4096 ≈ 4.8828 us
-    const float us_par_tick = (1000000.0f / 50.0f) / 4096.0f;
+    static uint16_t frame[IMG_WIDTH * IMG_HEIGHT];
 
-    // Position neutre (1.5 ms) sur canal 0
-    uint16_t on  = 0;
-    uint16_t off = to_ticks_us(1500, us_par_tick);
-    pca_write_pwm(0, on, off);
-
-    // Balayage continu 1000us ↔ 2000us sur canal 0
     while (true) {
-        if(debug){
-            printf("%s\r\n", "------------------------------------------------");
-            
-            printf("%s\r\n", "###################################");
-            i2c_scan();
-            printf("%s\r\n", "###################################");
-            
-            printf("Sending ticks to PCA9685\r\n");
-            printf("MODE1=0x%02X MODE2=0x%02X PRESCALE=0x%02X\r\n",
-                pca_read8(MODE1), pca_read8(MODE2), pca_read8(PRE_SCALE));
-        }
-
-        int mode = 3;
-
-        if(mode == 0){
-
-            int us = 1500;
-            pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-            
-            pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-            //uint8_t channel = 13;
-
-            for (int us = 1500; us >= 1100; us -= 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1100; us <= 1900; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1900; us >= 1500; us -= 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-
-            //////////////////////////////// TRANSITION ///////////////////////////////////
-            for (int us = 1500; us <= 2000; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1000; us -= 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1000; us <= 1500; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-        }
-
-        if(mode == 1){ //Calibration
-            int us = 1500;
-            pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-            
-            pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-        }
-
-        if(mode == 2){
-            int us = 1500;
-            pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-
-            us = 1500;
-
-            pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-            for (int us = 1500; us <= 2000; us += 25) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                //pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                //pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= 25) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                //pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                //pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            //////////// TRANSITION /////////////
-
-             for (int us = 1500; us <= 2000; us += 25) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                //pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                //pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= 25) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                //pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                //pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-        }
-
-        
-        if(mode == 3){ // Spin around
-            int step = 20;
-            if(initialize){
-                int us = 1500;
-                pca_write_pwm(COXA_BL, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
-            m
-                pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
-
-                us = 1100;
-
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
-
-                initialize = false;
-            }
-                        
-            
-            for (int us = 1500; us <= 2000; us += step) { // 2 et 12 montent
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1100; us <= 1500; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-            
-            for (int us = 1500; us >= 1100; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_BL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1500; us <= 2000; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1100; us <= 1500; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_BL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1500; us >= 1100; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-            
-        }
-
-        if(mode == 4){
-            int step = 30;
-            int max = 1600;
-            int min = 1100;
-            if(initialize){
-                int us = 1500;
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-            
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                us = min;
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                
-                us = max;
-                pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-
-                initialize = false;
-            }
-                        
-            
-            for (int us = 1500; us <= 2000; us += step) { // 2 et 12 montent
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = min; us <= 1500; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(9, 0, to_ticks_us(3000 - us, us_par_tick));
-                
-
-                sleep_ms(10);   
-            }
-            
-            for (int us = 1500; us >= min; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1500; us <= 2000; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = min; us <= 1500; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(3000 - us, us_par_tick));
-                
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1500; us >= min; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(9, 0, to_ticks_us(3000 - us, us_par_tick));
-                
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-            
-        }
-
-        if(mode == 5){
-            int step = 10;
-            int min = 1100;
-            int max = 3000 - min;
-
-            if(initialize){
-                int us = 1500;
-                pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-                us = 1600;
-                pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-                us = min;
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                
-                us = max;
-                pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
-
-                initialize = false;
-            }
-                        
-
-            for (int us = min; us <= 1500; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(9, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                
-                pca_write_pwm(5, 0, to_ticks_us(2600 - us, us_par_tick));
-                pca_write_pwm(4, 0, to_ticks_us(400 + us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            sleep_ms(1000);
-
-            for (int us = 1500; us >= min; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(9, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                
-                pca_write_pwm(5, 0, to_ticks_us(2600 - us, us_par_tick));
-                pca_write_pwm(4, 0, to_ticks_us(400 + us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            sleep_ms(1000);
-
-            
-        }
-
-        if(mode == 6){ //Move forward
-            int step = 20;
-            int min = 1300;
-            int max = 3000 - min;
-
-            if(initialize){
-                int us = 1500;
-                pca_write_pwm(COXA_BL, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
-
-                pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
-
-                us = 1600;
-                pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
-
-                us = min;
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
-                
-                us = max;
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
-
-                initialize = false;
-            }
-                        
-
-            for (int us = min; us <= 1500; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                if(min = 1300){
-                    pca_write_pwm(COXA_FR, 0, to_ticks_us((1500 - min)  + 2600 - us, us_par_tick));   // If min = 1300
-                    pca_write_pwm(COXA_BL, 0, to_ticks_us(-(1500 - min) + 400 + us, us_par_tick));
-                }
-
-                if(min == 1100){
-                    pca_write_pwm(COXA_FR, 0, to_ticks_us(2600 - us, us_par_tick));    // If min = 1100
-                    pca_write_pwm(COXA_BL, 0, to_ticks_us(400 + us, us_par_tick));
-                }
-                
-                
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 1600; us <= 2000; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = min; us <= max; us += step) {
-
-                pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_BL, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1600; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-            
-
-            for (int us = 1500; us >= min; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                
-                if(min = 1300){
-                    pca_write_pwm(COXA_BL, 0, to_ticks_us((1500 - min)  + 2600 - us, us_par_tick));   // If min = 1300
-                    pca_write_pwm(COXA_FR, 0, to_ticks_us(-(1500 - min) + 400 + us, us_par_tick));
-                }
-
-                if(min == 1100){
-                    pca_write_pwm(COXA_BL, 0, to_ticks_us(2600 - us, us_par_tick));    // If min = 1100
-                    pca_write_pwm(COXA_FR, 0, to_ticks_us(400 + us, us_par_tick));
-                }
-
-                sleep_ms(10);   
-            }
-            
-            for (int us = 1500; us <= 2000; us += step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = min; us <= max; us += step) {
-
-                pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(COXA_FL, 0, to_ticks_us(3000 - us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-
-            for (int us = 2000; us >= 1500; us -= step) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
-                pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
-
-                sleep_ms(10);   
-            }
-            
-        }
-
-        if(mode == 7){ // Identification of channels
-            int step = 10; 
-            int channel = 5;
-            
-            for (int us = 2000; us >= 1000; us -= step) {
-                pca_write_pwm(channel, 0, to_ticks_us(us, us_par_tick));
-                sleep_ms(10);   
-            }
-
-            sleep_ms(1000);
-            
-            for (int us = 1000; us <= 2000; us += step) {
-                pca_write_pwm(channel, 0, to_ticks_us(us, us_par_tick));
-                sleep_ms(10);   
-            }
-            sleep_ms(1000);
-        }
-        /*
-        for(int demo0 = 0; demo0 < 10; ++demo0){
-           for (int us = 1000; us <= 2000; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                for(uint8_t i = 0; i < 4; i = i+1){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);   
-            }
-            sleep_ms(50);
-
-            for (int us = 2000; us >= 1000; us -= 10) {
-                for(uint8_t i = 0; i < 4; i = i+1){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);
-            }
-            sleep_ms(50); 
-        }
-
-        for(int demo1 = 0; demo1 < 10; ++demo1){
-            for (int us = 1000; us <= 2000; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                for(uint8_t i = 1; i < 4; i = i+2){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);   
-            }
-            sleep_ms(50);
-
-            for (int us = 2000; us >= 1000; us -= 10) {
-                for(uint8_t i = 1; i < 4; i = i+2){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);
-            }
-            sleep_ms(50);
-            
-            ////////
-
-            for (int us = 1000; us <= 2000; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                for(uint8_t i = 0; i < 4; i = i+2){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);   
-            }
-            sleep_ms(50);
-
-            for (int us = 2000; us >= 1000; us -= 10) {
-                for(uint8_t i = 0; i < 4; i = i+2){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);
-            }
-
-            
-        }
-        ////// TRANSITION //////
-        for(uint8_t i = 0; i < 4; i = i+1){
-            pca_write_pwm(i, 0, to_ticks_us(1000, us_par_tick));
-        }
+#if USE_TEST_PATTERN
+        fill_test_pattern(frame);
+#else
+        capture_frame(frame);
+#endif
+        send_frame_usb(frame);
         sleep_ms(50);
-
-        for(uint8_t i = 4; i < 8; i = i+1){
-            pca_write_pwm(i, 0, to_ticks_us(1500, us_par_tick));
-        }
-        sleep_ms(50);
-        ////// TRANSITION //////
-
-        for(int demo2 = 0; demo2 < 10; ++demo2){
-             for (int us = 1000; us <= 2000; us += 10) {
-                //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-                for(uint8_t i = 4; i < 8; i = i+1){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);   
-            }
-            sleep_ms(50);
-
-            for (int us = 2000; us >= 1000; us -= 10) {
-                for(uint8_t i = 4; i < 8; i = i+1){
-                    pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-                }
-                sleep_ms(10);
-            }
-        }
-        
-
-        ////// TRANSITION //////
-        for(uint8_t i = 0; i < 4; i = i+1){
-            pca_write_pwm(i, 0, to_ticks_us(1000, us_par_tick));
-        }
-        sleep_ms(50);
-
-        for(uint8_t i = 4; i < 8; i = i+1){
-            pca_write_pwm(i, 0, to_ticks_us(1500, us_par_tick));
-        }
-        sleep_ms(50);
-        ////// TRANSITION //////
-        */
-        /* int us = 1500;
-        uint16_t ticks = to_ticks_us(us, us_par_tick);
-        
-        for(int i = 0; i < 4; ++i){
-            pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-            sleep_ms(10);
-        }
-
-        ///
-        for (int mus = 1000; mus <= 2000; mus += 10) {
-            ticks = to_ticks_us(mus, us_par_tick);
-
-            for(uint8_t i = 4; i < 8; ++i){
-                pca_write_pwm(i, 0, to_ticks_us(mus, us_par_tick));
-            }
-            sleep_ms(5);   
-        }
-        sleep_ms(50);
-
-        for (int mus = 2000; mus >= 1000; mus -= 10) {
-            ticks = to_ticks_us(mus, us_par_tick);
-            for(uint8_t i = 4; i < 8; ++i){
-                pca_write_pwm(i, 0, to_ticks_us(mus, us_par_tick));
-            }
-            sleep_ms(5);
-        }
-        sleep_ms(50); */
-        /* int us = 1000;
-        uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-        for(uint8_t i = 0; i < 4; ++i){
-            pca_write_pwm(i, 0, to_ticks_us(us, us_par_tick));
-            sleep_ms(10);
-        } */
-    
-        if(mode == 8){ //
-
-        }
-
-
-        if(debug){printf("%s\r\n", "------------------------------------------------");}
-
     }
+
+    return 0;
 }
