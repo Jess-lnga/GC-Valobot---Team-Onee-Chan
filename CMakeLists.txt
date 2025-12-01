@@ -28,31 +28,30 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(pca9685 C CXX ASM)
+project(ov7670 C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
-add_executable(pca9685
-    pca9685.c
+add_executable(ov7670
     ov7670.c       # <-- EN OPTION : fichier avec le code caméra
 )
 
 # Dépendances communes
-target_link_libraries(pca9685 
+target_link_libraries(ov7670 
     pico_stdlib 
     hardware_i2c
     hardware_pwm   # <-- nécessaire pour générer XCLK avec le PWM
 )
 
 if (PICO_CYW43_SUPPORTED)
-    target_link_libraries(pca9685 pico_cyw43_arch_none)
+    target_link_libraries(ov7670 pico_cyw43_arch_none)
 endif()
 
 # === Clé pour avoir pico/stdio_usb.h et la CDC USB ===
-pico_enable_stdio_usb(pca9685 1)   # active stdin/stdout via USB
-pico_enable_stdio_uart(pca9685 0)  # (optionnel) coupe l’UART
+pico_enable_stdio_usb(ov7670 1)   # active stdin/stdout via USB
+pico_enable_stdio_uart(ov7670 0)  # (optionnel) coupe l’UART
 
 # Fichiers .uf2/.bin/.map etc.
-pico_add_extra_outputs(pca9685)
+pico_add_extra_outputs(ov7670)
