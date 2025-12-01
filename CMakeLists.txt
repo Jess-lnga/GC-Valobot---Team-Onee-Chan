@@ -36,12 +36,14 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 add_executable(pca9685
     pca9685.c
+    ov7670.c       # <-- EN OPTION : fichier avec le code caméra
 )
 
 # Dépendances communes
 target_link_libraries(pca9685 
     pico_stdlib 
     hardware_i2c
+    hardware_pwm   # <-- nécessaire pour générer XCLK avec le PWM
 )
 
 if (PICO_CYW43_SUPPORTED)
@@ -54,4 +56,3 @@ pico_enable_stdio_uart(pca9685 0)  # (optionnel) coupe l’UART
 
 # Fichiers .uf2/.bin/.map etc.
 pico_add_extra_outputs(pca9685)
-
