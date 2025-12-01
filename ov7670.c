@@ -61,6 +61,11 @@
 #define REG_VSTOP    0x1A
 #define REG_VREF     0x03
 
+// *** nouveaux pour la netteté / débruitage ***
+#define REG_EDGE     0x3F   // Edge enhancement
+#define REG_COM16    0x41   // de-noise / AWB gain / etc.
+#define REG_DNSTH    0x77   // De-noise range control
+
 // -----------------------------------------------------------------------------
 // Protocole USB
 // -----------------------------------------------------------------------------
@@ -79,12 +84,12 @@ static void ov7670_write_reg(uint8_t reg, uint8_t val) {
 // Init OV7670 : QQVGA (160x120) RGB565
 // -----------------------------------------------------------------------------
 static void ov7670_init(void) {
-    // Reset
-    ov7670_write_reg(REG_COM7, 0x80); // Reset
+    // Reset global
+    ov7670_write_reg(REG_COM7, 0x80);
     sleep_ms(100);
 
-    // Horloge interne
-    ov7670_write_reg(REG_CLKRC, 0x80); // internal PLL, prescale
+    // Horloge interne (PLL + prescaler)
+    ov7670_write_reg(REG_CLKRC, 0x80); // uses internal PLL, auto prescale
 
     // COM11 : auto 50/60Hz + timing expo
     ov7670_write_reg(REG_COM11, 0x0A);
@@ -96,18 +101,17 @@ static void ov7670_init(void) {
     ov7670_write_reg(REG_TSLB, 0x04);
     ov7670_write_reg(REG_COM15, 0xD0); // RGB565, full range
 
-    // Downsampling + scaling
+    // Downsampling + scaling (QQVGA)
     ov7670_write_reg(REG_COM3, 0x04);   // DCW enable
     ov7670_write_reg(REG_COM14, 0x1A);  // PCLK/4, scaling manuel
 
-    // Scaling pour QQVGA
     ov7670_write_reg(REG_SCALING_XSC, 0x3A);
     ov7670_write_reg(REG_SCALING_YSC, 0x35);
-    ov7670_write_reg(REG_SCALING_DCWCTR, 0x22);   // 2x2 downsample
+    ov7670_write_reg(REG_SCALING_DCWCTR, 0x22);   // 4x downsample (QQVGA)
     ov7670_write_reg(REG_SCALING_PCLK_DIV, 0xF2);
     ov7670_write_reg(REG_SCALING_PCLK_DELAY, 0x02);
 
-    // Fenêtre
+    // Fenêtre (crop)
     ov7670_write_reg(REG_HSTART, 24);
     ov7670_write_reg(REG_HSTOP,  6);
     ov7670_write_reg(REG_HREF,   36);
@@ -129,6 +133,24 @@ static void ov7670_init(void) {
     // AWB
     ov7670_write_reg(0x13, 0xE7);
     ov7670_write_reg(0x6F, 0x9F);
+
+    // *** Amélioration netteté / réduction flou "huileux" ***
+
+    // COM16 par défaut = 0x10 => débruitage auto ACTIVÉ.
+    // Ici :
+    //  - bit3 = 1 : AWB gain enable
+    //  - bit4 = 0 : débruitage auto OFF
+    // => moins de flou, un peu plus de texture.
+    ov7670_write_reg(REG_COM16, 0x08);
+
+    // EDGE : facteur de renforcement des contours (bits[4:0]).
+    // 0x00 = pas de renforcement, valeur trop grande = halos.
+    // 0x20 donne un renforcement modéré.
+    ov7670_write_reg(REG_EDGE, 0x20);
+
+    // DNSTH : contrôle de la plage de dé-bruitage.
+    // Valeur plus faible = moins de lissage → moins d'effet peinture.
+    ov7670_write_reg(REG_DNSTH, 0x00);
 
     sleep_ms(200);
 }

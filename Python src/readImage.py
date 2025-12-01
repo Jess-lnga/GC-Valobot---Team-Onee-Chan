@@ -4,11 +4,24 @@ import numpy as np
 import cv2
 import time
 
+# ---------------------------------------------------------------------
+# Config port série
+# ---------------------------------------------------------------------
 PORT = "COM4"   # adapte si besoin
 BAUD = 115200   # ignoré par l’USB CDC, mais nécessaire pour pyserial
 
 MAGIC_START = b"OVF0"
 
+# Activer / désactiver le post-traitement
+ENABLE_SHARPEN = True
+ENABLE_SATURATION_BOOST = True
+SATURATION_FACTOR = 1.3  # 1.0 = inchangé, >1 = plus saturé
+SHARPEN_AMOUNT = 1.5     # 1.0 = pas de sharpen, typiquement 1.2–1.8
+
+
+# ---------------------------------------------------------------------
+# Utilitaires
+# ---------------------------------------------------------------------
 def read_exact(ser, n):
     """Lit exactement n octets (ou lève une erreur)."""
     data = b""
@@ -18,6 +31,7 @@ def read_exact(ser, n):
             raise IOError("Timeout ou déconnexion pendant la lecture")
         data += chunk
     return data
+
 
 def sync_magic(ser, magic=MAGIC_START):
     """Cherche la séquence magic dans le flux série."""
@@ -29,6 +43,7 @@ def sync_magic(ser, magic=MAGIC_START):
         buf += b
         if buf.endswith(magic):
             return
+
 
 def rgb565_to_bgr(frame565):
     """
@@ -46,6 +61,33 @@ def rgb565_to_bgr(frame565):
     img_bgr = np.dstack((b, g, r))
     return img_bgr
 
+
+def enhance_image(frame_bgr):
+    """
+    Applique un léger sharpen + boost de saturation pour réduire l’effet huileux.
+    """
+    img = frame_bgr
+
+    # Sharpen (unsharp mask simple)
+    if ENABLE_SHARPEN:
+        # sigma=1.0 : léger, tu peux ajuster
+        blur = cv2.GaussianBlur(img, (0, 0), 1.0)
+        img = cv2.addWeighted(img, SHARPEN_AMOUNT, blur, -(SHARPEN_AMOUNT - 1.0), 0)
+
+    # Boost saturation dans l’espace HSV
+    if ENABLE_SATURATION_BOOST:
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        s = np.clip(s.astype(np.float32) * SATURATION_FACTOR, 0, 255).astype(np.uint8)
+        hsv = cv2.merge((h, s, v))
+        img = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    return img
+
+
+# ---------------------------------------------------------------------
+# Programme principal
+# ---------------------------------------------------------------------
 def main():
     ser = serial.Serial(PORT, BAUD, timeout=2)
     print(f"Ouvert sur {PORT}")
@@ -54,6 +96,11 @@ def main():
     last_time = time.time()
     frame_count = 0
     first_frame = True
+
+    window_name = "OV7670 (Pico)"
+
+    # Fenêtre redimensionnable
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     try:
         while True:
@@ -91,13 +138,15 @@ def main():
 
                 frame_bgr = rgb565_to_bgr(frame565)
 
-                # 6) Affichage + FPS
+                # 6) Post-traitement (sharp + saturation)
+                frame_bgr = enhance_image(frame_bgr)
+
+                # 7) Calcul FPS
                 frame_count += 1
                 now = time.time()
-                dt = now - last_time
                 fps = None
-                if dt >= 1.0:
-                    fps = frame_count / dt
+                if now - last_time >= 1.0:
+                    fps = frame_count / (now - last_time)
                     frame_count = 0
                     last_time = now
 
@@ -118,9 +167,27 @@ def main():
                         cv2.LINE_AA,
                     )
 
-                cv2.imshow("OV7670 (Pico)", display)
+                # 8) Adapter l’image à la taille actuelle de la fenêtre
+                try:
+                    # getWindowImageRect : (x, y, w, h)
+                    _, _, win_w, win_h = cv2.getWindowImageRect(window_name)
+                    if win_w > 0 and win_h > 0:
+                        # NEAREST pour garder un aspect "net" (moins flou)
+                        display_resized = cv2.resize(
+                            display,
+                            (win_w, win_h),
+                            interpolation=cv2.INTER_NEAREST
+                        )
+                    else:
+                        display_resized = display
+                except cv2.error:
+                    # Si la fonction n’existe pas ou plante, on affiche en taille native
+                    display_resized = display
+
+                cv2.imshow(window_name, display_resized)
+
                 key = cv2.waitKey(1) & 0xFF
-                if key == 27:  # ESC
+                if key == 27:  # ESC pour quitter
                     break
 
             except IOError as e:
@@ -131,6 +198,7 @@ def main():
         ser.close()
         cv2.destroyAllWindows()
         print("Fermé.")
+
 
 if __name__ == "__main__":
     main()
