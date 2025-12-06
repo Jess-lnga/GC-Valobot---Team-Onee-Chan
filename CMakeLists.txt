@@ -6,9 +6,6 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Initialise pico_sdk from installed location
-# (note this can come from environment, CMake cache etc)
-
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
@@ -28,30 +25,37 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(ov7670 C CXX ASM)
+# NOM DU PROJET
+project(onee_chan C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Add executable. Default name is the project name, version 0.1
-add_executable(ov7670
-    ov7670.c       # <-- EN OPTION : fichier avec le code caméra
+# Exécutable principal "onee_chan" avec tes deux fichiers source
+add_executable(onee_chan
+    namiko.c     # main()
+    ov7670.c     # module caméra
 )
 
 # Dépendances communes
-target_link_libraries(ov7670 
-    pico_stdlib 
+target_link_libraries(onee_chan
+    pico_stdlib
     hardware_i2c
-    hardware_pwm   # <-- nécessaire pour générer XCLK avec le PWM
+    hardware_pwm
 )
 
 if (PICO_CYW43_SUPPORTED)
-    target_link_libraries(ov7670 pico_cyw43_arch_none)
+    target_link_libraries(onee_chan pico_cyw43_arch_none)
 endif()
 
-# === Clé pour avoir pico/stdio_usb.h et la CDC USB ===
-pico_enable_stdio_usb(ov7670 1)   # active stdin/stdout via USB
-pico_enable_stdio_uart(ov7670 0)  # (optionnel) coupe l’UART
+# STDIO via USB (CDC)
+pico_enable_stdio_usb(onee_chan 1)
+pico_enable_stdio_uart(onee_chan 0)
+
+# Optionnel : ajouter le répertoire courant comme include dir (pour ov7670.h)
+target_include_directories(onee_chan PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
 
 # Fichiers .uf2/.bin/.map etc.
-pico_add_extra_outputs(ov7670)
+pico_add_extra_outputs(onee_chan)

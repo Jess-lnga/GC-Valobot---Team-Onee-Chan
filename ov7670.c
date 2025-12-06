@@ -2,18 +2,14 @@
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
-#include "pico/stdio_usb.h"   // pour désactiver CRLF
+#include "pico/stdio_usb.h"
+
+#include "ov7670.h"
 
 // -----------------------------------------------------------------------------
 // Config debug
 // -----------------------------------------------------------------------------
 #define USE_TEST_PATTERN 0  // 1 = dégradé de test, 0 = vraie caméra
-
-// -----------------------------------------------------------------------------
-// Paramètres image
-// -----------------------------------------------------------------------------
-#define IMG_WIDTH   160
-#define IMG_HEIGHT  120
 
 // -----------------------------------------------------------------------------
 // Brochage
@@ -81,9 +77,10 @@ static void ov7670_write_reg(uint8_t reg, uint8_t val) {
 }
 
 // -----------------------------------------------------------------------------
-// Init OV7670 : QQVGA (160x120) RGB565 propre
+// Init interne du capteur OV7670 : QQVGA (160x120) RGB565 propre
+// (ne gère pas I2C / GPIO / XCLK, juste les registres de la caméra)
 // -----------------------------------------------------------------------------
-static void ov7670_init(void) {
+static void ov7670_sensor_init(void) {
     // Reset global
     ov7670_write_reg(REG_COM7, 0x80);
     sleep_ms(100);
@@ -151,7 +148,7 @@ static void ov7670_init(void) {
 }
 
 // -----------------------------------------------------------------------------
-// Génération de XCLK via PWM (~6 MHz, déjà testé OK chez toi)
+// Génération de XCLK via PWM (~6 MHz, testé OK)
 // -----------------------------------------------------------------------------
 static void xclk_init(void) {
     gpio_set_function(PIN_XCLK, GPIO_FUNC_PWM);
@@ -164,7 +161,7 @@ static void xclk_init(void) {
 }
 
 // -----------------------------------------------------------------------------
-// Init des GPIO
+// Init des GPIO (bus de données + signaux sync)
 // -----------------------------------------------------------------------------
 static void camera_pins_init(void) {
     for (int pin = PIN_D0; pin <= PIN_D7; ++pin) {
@@ -193,13 +190,13 @@ static inline uint8_t read_data_bus(void) {
 }
 
 // -----------------------------------------------------------------------------
-// Motif de test
+// Motif de test (optionnel)
 // -----------------------------------------------------------------------------
 static void fill_test_pattern(uint16_t *buf) {
-    for (int y = 0; y < IMG_HEIGHT; ++y) {
-        for (int x = 0; x < IMG_WIDTH; ++x) {
-            uint8_t r8 = (x * 255) / IMG_WIDTH;
-            uint8_t g8 = (y * 255) / IMG_HEIGHT;
+    for (int y = 0; y < OV7670_IMG_HEIGHT; ++y) {
+        for (int x = 0; x < OV7670_IMG_WIDTH; ++x) {
+            uint8_t r8 = (x * 255) / OV7670_IMG_WIDTH;
+            uint8_t g8 = (y * 255) / OV7670_IMG_HEIGHT;
             uint8_t b8 = 0;
 
             uint16_t r = (r8 >> 3) & 0x1F;
@@ -207,16 +204,37 @@ static void fill_test_pattern(uint16_t *buf) {
             uint16_t b = (b8 >> 3) & 0x1F;
 
             uint16_t pixel = (r << 11) | (g << 5) | b;
-            buf[y * IMG_WIDTH + x] = pixel;
+            buf[y * OV7670_IMG_WIDTH + x] = pixel;
         }
     }
 }
 
 // -----------------------------------------------------------------------------
-// Capture d'une frame RGB565 160x120
+// API PUBLIQUE : initialisation complète du module caméra
 // -----------------------------------------------------------------------------
-static void capture_frame(uint16_t *buf) {
-    const int max_pixels = IMG_WIDTH * IMG_HEIGHT;
+void ov7670_init(void) {
+    // Init I2C (i2c0 à 100 kHz) + pins SDA/SCL
+    i2c_init(i2c0, 100 * 1000);
+    gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(PIN_I2C_SDA);
+    gpio_pull_up(PIN_I2C_SCL);
+
+    // Génération XCLK, GPIO data+sync, registres capteur
+    xclk_init();
+    camera_pins_init();
+    ov7670_sensor_init();
+}
+
+// -----------------------------------------------------------------------------
+// API PUBLIQUE : capture d'une frame RGB565 160x120
+// -----------------------------------------------------------------------------
+void ov7670_capture_frame(uint16_t *buf) {
+#if USE_TEST_PATTERN
+    fill_test_pattern(buf);
+    return;
+#else
+    const int max_pixels = OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT;
     int pixel_count = 0;
 
     // 1) Attendre un front montant de VSYNC
@@ -258,7 +276,7 @@ static void capture_frame(uint16_t *buf) {
             uint8_t lo = read_data_bus();
             while (gpio_get(PIN_PCLK)) tight_loop_contents();
 
-            if (col < IMG_WIDTH) {
+            if (col < OV7670_IMG_WIDTH) {
                 uint16_t pixel = ((uint16_t)hi << 8) | lo;
                 buf[pixel_count++] = pixel;
             }
@@ -266,7 +284,7 @@ static void capture_frame(uint16_t *buf) {
         }
 
         // Si la ligne envoyée par la caméra était plus large,
-        // on ignore le surplus (col > IMG_WIDTH) mais on garde la synchro.
+        // on ignore le surplus (col > OV7670_IMG_WIDTH) mais on garde la synchro.
     }
 
 end:
@@ -274,65 +292,31 @@ end:
     for (int i = pixel_count; i < max_pixels; ++i) {
         buf[i] = 0;
     }
+#endif
 }
 
 // -----------------------------------------------------------------------------
-// Envoi USB
+// API PUBLIQUE : envoi USB
 // -----------------------------------------------------------------------------
-static void send_frame_usb(uint16_t *buf) {
-    uint16_t width = IMG_WIDTH;
-    uint16_t height = IMG_HEIGHT;
-    uint32_t payload_len = (uint32_t)IMG_WIDTH * (uint32_t)IMG_HEIGHT * 2;
+void ov7670_send_frame_usb(uint16_t *buf) {
+    uint16_t width  = OV7670_IMG_WIDTH;
+    uint16_t height = OV7670_IMG_HEIGHT;
+    uint32_t payload_len = (uint32_t)width * (uint32_t)height * 2;
 
     uint32_t sum = 0;
-    for (int i = 0; i < IMG_WIDTH * IMG_HEIGHT; ++i) {
+    for (int i = 0; i < width * height; ++i) {
         sum += buf[i];
     }
     uint16_t checksum = (uint16_t)(sum & 0xFFFF);
 
     fwrite(FRAME_MAGIC_START, 1, 4, stdout);
     fwrite((uint8_t[]){FRAME_VERSION}, 1, 1, stdout);
-    fwrite(&width, 1, 2, stdout);
+    fwrite(&width,  1, 2, stdout);
     fwrite(&height, 1, 2, stdout);
     fwrite(&payload_len, 1, 4, stdout);
-    fwrite(&checksum, 1, 2, stdout);
+    fwrite(&checksum,    1, 2, stdout);
 
-    fwrite(buf, 2, IMG_WIDTH * IMG_HEIGHT, stdout);
+    fwrite(buf, 2, width * height, stdout);
 
     fflush(stdout);
-}
-
-// -----------------------------------------------------------------------------
-// main()
-// -----------------------------------------------------------------------------
-int main() {
-    stdio_init_all();
-    stdio_set_translate_crlf(&stdio_usb, false);
-    setvbuf(stdout, NULL, _IONBF, 0);
-
-    sleep_ms(2000);
-
-    i2c_init(i2c0, 100 * 1000);
-    gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(PIN_I2C_SDA);
-    gpio_pull_up(PIN_I2C_SCL);
-
-    xclk_init();
-    camera_pins_init();
-    ov7670_init();
-
-    static uint16_t frame[IMG_WIDTH * IMG_HEIGHT];
-
-    while (1) {
-#if USE_TEST_PATTERN
-        fill_test_pattern(frame);
-#else
-        capture_frame(frame);
-#endif
-        send_frame_usb(frame);
-        // pas de sleep ici : laisse la caméra dicter le FPS
-    }
-
-    return 0;
 }
