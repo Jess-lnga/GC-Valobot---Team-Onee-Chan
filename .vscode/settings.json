@@ -1,34 +1,37 @@
-
 {
     "cmake.configureArgs": [
         "-DPICO_SDK_PATH=C:/pico-sdk/2.2.0",
         "-DCMAKE_MAKE_PROGRAM=C:/Users/Jérôme ESSOLA ELANGA/.pico-sdk/ninja/v1.12.1/ninja.exe"
-
     ],
-    
+
     // --- CMake Tools ---
     "cmake.generator": "Ninja",
     "cmake.ninjaPath": "${userHome}/.pico-sdk/ninja/v1.12.1/ninja.exe",
-    //"cmake.ninjaPath": "C:/Users/Jérôme ESSOLA ELANGA/.pico-sdk/ninja/v1.12.1/ninja.exe",
+    // "cmake.ninjaPath": "C:/Users/Jérôme ESSOLA ELANGA/.pico-sdk/ninja/v1.12.1/ninja.exe",
 
     "cmake.cmakePath": "${userHome}/.pico-sdk/cmake/v3.31.5/bin/cmake.exe",
+
+    // IMPORTANT : ton build n'est PAS dans ${workspaceFolder}/build mais ici :
     "cmake.buildDirectory": "C:/PicoBuild/${workspaceFolderBasename}",
 
-  
     "cmake.configureOnOpen": true,
     "cmake.automaticReconfigure": true,
     "cmake.useCMakePresets": "never",
 
-    // --- Extension Raspberry Pi Pico (facultatif mais recommandé) ---
+    // --- Extension Raspberry Pi Pico ---
     "raspberry-pi-pico.useCmakeTools": true,
     "raspberry-pi-pico.cmakeAutoConfigure": false,
     "raspberry-pi-pico.cmakePath": "${userHome}/.pico-sdk/cmake/v3.31.5/bin/cmake.exe",
     "raspberry-pi-pico.ninjaPath": "${userHome}/.pico-sdk/ninja/v1.12.1/ninja.exe",
 
-    // --- Donne aussi le SDK à CMake au moment de la config (utile sur Windows) ---
+    // --- Donne aussi le SDK à CMake au moment de la config ---
     "cmake.configureEnvironment": {
-        //"PICO_SDK_PATH": "${userHome}/.pico-sdk/sdk/2.2.0",
         "PICO_SDK_PATH": "C:/pico-sdk/2.2.0",
         "PICO_TOOLCHAIN_PATH": "${userHome}/.pico-sdk/toolchain/14_2_Rel1"
-    }
+    },
+
+    // --- CLEF POUR INTELLISENSE ---
+    // Demande à l'extension C/C++ d'utiliser CMake Tools pour savoir
+    // quels includes / defines / flags utiliser.
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
 }
