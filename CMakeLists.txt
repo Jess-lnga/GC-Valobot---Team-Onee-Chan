@@ -31,10 +31,11 @@ project(onee_chan C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Exécutable principal "onee_chan" avec tes deux fichiers source
+# Exécutable principal "onee_chan" avec tes fichiers source
 add_executable(onee_chan
-    namiko.c     # main()
-    ov7670.c     # module caméra
+    namiko.c          # main()
+    ov7670.c          # module caméra
+    frame_analysis.c  # analyse de frame / suivi de ligne
 )
 
 # Dépendances communes
@@ -52,7 +53,7 @@ endif()
 pico_enable_stdio_usb(onee_chan 1)
 pico_enable_stdio_uart(onee_chan 0)
 
-# Optionnel : ajouter le répertoire courant comme include dir (pour ov7670.h)
+# Ajouter le répertoire courant comme include dir (ov7670.h, frame_analysis.h, etc.)
 target_include_directories(onee_chan PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
 )
