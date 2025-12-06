@@ -30,10 +30,10 @@
 #define PIN_D6        12
 #define PIN_D7        13
 
-#define PIN_PCLK      14   // PLK
-#define PIN_VSYNC     15   // VS
-#define PIN_HREF      16   // HS
-#define PIN_XCLK      17   // XLK
+#define PIN_PCLK      14   // PCLK
+#define PIN_VSYNC     15   // VSYNC
+#define PIN_HREF      16   // HREF
+#define PIN_XCLK      17   // XCLK
 
 // -----------------------------------------------------------------------------
 // Adresse I2C OV7670 (7 bits)
@@ -61,7 +61,7 @@
 #define REG_VSTOP    0x1A
 #define REG_VREF     0x03
 
-// *** nouveaux pour la netteté / débruitage ***
+// Netteté / débruitage
 #define REG_EDGE     0x3F   // Edge enhancement
 #define REG_COM16    0x41   // de-noise / AWB gain / etc.
 #define REG_DNSTH    0x77   // De-noise range control
@@ -81,7 +81,7 @@ static void ov7670_write_reg(uint8_t reg, uint8_t val) {
 }
 
 // -----------------------------------------------------------------------------
-// Init OV7670 : QQVGA (160x120) RGB565
+// Init OV7670 : QQVGA (160x120) RGB565 propre
 // -----------------------------------------------------------------------------
 static void ov7670_init(void) {
     // Reset global
@@ -89,7 +89,8 @@ static void ov7670_init(void) {
     sleep_ms(100);
 
     // Horloge interne (PLL + prescaler)
-    ov7670_write_reg(REG_CLKRC, 0x80); // uses internal PLL, auto prescale
+    // 0x80 = use internal PLL, auto prescale
+    ov7670_write_reg(REG_CLKRC, 0x80);
 
     // COM11 : auto 50/60Hz + timing expo
     ov7670_write_reg(REG_COM11, 0x0A);
@@ -101,7 +102,7 @@ static void ov7670_init(void) {
     ov7670_write_reg(REG_TSLB, 0x04);
     ov7670_write_reg(REG_COM15, 0xD0); // RGB565, full range
 
-    // Downsampling + scaling (QQVGA)
+    // Downsampling + scaling (QQVGA 160x120)
     ov7670_write_reg(REG_COM3, 0x04);   // DCW enable
     ov7670_write_reg(REG_COM14, 0x1A);  // PCLK/4, scaling manuel
 
@@ -111,7 +112,7 @@ static void ov7670_init(void) {
     ov7670_write_reg(REG_SCALING_PCLK_DIV, 0xF2);
     ov7670_write_reg(REG_SCALING_PCLK_DELAY, 0x02);
 
-    // Fenêtre (crop)
+    // Fenêtre (crop) qui marchait déjà chez toi
     ov7670_write_reg(REG_HSTART, 24);
     ov7670_write_reg(REG_HSTOP,  6);
     ov7670_write_reg(REG_HREF,   36);
@@ -130,41 +131,35 @@ static void ov7670_init(void) {
     ov7670_write_reg(0x54, 0x80);
     ov7670_write_reg(0x58, 0x9E);
 
-    // AWB
-    ov7670_write_reg(0x13, 0xE7);
+    // AWB / AGC / AEC (auto)
+    ov7670_write_reg(0x13, 0xE7);  // AGC, AEC, AWB ON
     ov7670_write_reg(0x6F, 0x9F);
 
-    // *** Amélioration netteté / réduction flou "huileux" ***
+    // --- Netteté / bruit (compromis) ---
+    // COM16 :
+    //  bit3 = AWB gain enable
+    //  bit4 = denoise auto enable (on le laisse à 0 pour éviter le "huileux" fort)
+    ov7670_write_reg(REG_COM16, 0x08);  // AWB gain, denoise auto OFF
 
-    // COM16 par défaut = 0x10 => débruitage auto ACTIVÉ.
-    // Ici :
-    //  - bit3 = 1 : AWB gain enable
-    //  - bit4 = 0 : débruitage auto OFF
-    // => moins de flou, un peu plus de texture.
-    ov7670_write_reg(REG_COM16, 0x08);
+    // EDGE : renforcement des contours (modéré)
+    ov7670_write_reg(REG_EDGE,  0x30);  // tu peux tester 0x20..0x3C
 
-    // EDGE : facteur de renforcement des contours (bits[4:0]).
-    // 0x00 = pas de renforcement, valeur trop grande = halos.
-    // 0x20 donne un renforcement modéré.
-    ov7670_write_reg(REG_EDGE, 0x20);
-
-    // DNSTH : contrôle de la plage de dé-bruitage.
-    // Valeur plus faible = moins de lissage → moins d'effet peinture.
+    // DNSTH : seuil de débruitage (0x00 = peu de lissage)
     ov7670_write_reg(REG_DNSTH, 0x00);
 
     sleep_ms(200);
 }
 
 // -----------------------------------------------------------------------------
-// Génération de XCLK via PWM
+// Génération de XCLK via PWM (~6 MHz, déjà testé OK chez toi)
 // -----------------------------------------------------------------------------
 static void xclk_init(void) {
     gpio_set_function(PIN_XCLK, GPIO_FUNC_PWM);
     uint slice = pwm_gpio_to_slice_num(PIN_XCLK);
 
     pwm_set_wrap(slice, 1);
-    pwm_set_clkdiv(slice, 10.4f);
-    pwm_set_gpio_level(PIN_XCLK, 1); // 50% duty
+    pwm_set_clkdiv(slice, 10.4f);       // 125 MHz / (10.4 * 2) ≈ 6 MHz
+    pwm_set_gpio_level(PIN_XCLK, 1);    // 50% duty
     pwm_set_enabled(slice, true);
 }
 
@@ -218,7 +213,7 @@ static void fill_test_pattern(uint16_t *buf) {
 }
 
 // -----------------------------------------------------------------------------
-// Capture d'une frame RGB565
+// Capture d'une frame RGB565 160x120
 // -----------------------------------------------------------------------------
 static void capture_frame(uint16_t *buf) {
     const int max_pixels = IMG_WIDTH * IMG_HEIGHT;
@@ -251,21 +246,31 @@ static void capture_frame(uint16_t *buf) {
         }
 
         // 4) Lire pixels tant que HREF haut
+        int col = 0;
         while (gpio_get(PIN_HREF) && !gpio_get(PIN_VSYNC) && pixel_count < max_pixels) {
+            // Octet de poids fort
             while (!gpio_get(PIN_PCLK)) tight_loop_contents();
             uint8_t hi = read_data_bus();
             while (gpio_get(PIN_PCLK)) tight_loop_contents();
 
+            // Octet de poids faible
             while (!gpio_get(PIN_PCLK)) tight_loop_contents();
             uint8_t lo = read_data_bus();
             while (gpio_get(PIN_PCLK)) tight_loop_contents();
 
-            uint16_t pixel = ((uint16_t)hi << 8) | lo;
-            buf[pixel_count++] = pixel;
+            if (col < IMG_WIDTH) {
+                uint16_t pixel = ((uint16_t)hi << 8) | lo;
+                buf[pixel_count++] = pixel;
+            }
+            col++;
         }
+
+        // Si la ligne envoyée par la caméra était plus large,
+        // on ignore le surplus (col > IMG_WIDTH) mais on garde la synchro.
     }
 
 end:
+    // Complète en noir si jamais on a eu moins de pixels
     for (int i = pixel_count; i < max_pixels; ++i) {
         buf[i] = 0;
     }
@@ -319,14 +324,14 @@ int main() {
 
     static uint16_t frame[IMG_WIDTH * IMG_HEIGHT];
 
-    while (true) {
+    while (1) {
 #if USE_TEST_PATTERN
         fill_test_pattern(frame);
 #else
         capture_frame(frame);
 #endif
         send_frame_usb(frame);
-        sleep_ms(50);
+        // pas de sleep ici : laisse la caméra dicter le FPS
     }
 
     return 0;
