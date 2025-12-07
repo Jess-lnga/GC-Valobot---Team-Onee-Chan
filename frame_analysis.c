@@ -8,10 +8,10 @@
 #define COLOR_WHITE  0xFFFF
 
 // Largeur minimale d'un segment pour être considéré comme une "vraie ligne"
-#define MIN_SEGMENT_WIDTH  8
+#define MIN_SEGMENT_WIDTH      3
 
-// Luminosité max en mode R5+G6+B5 : 31 + 63 + 31 = 125
-#define MAX_BRIGHTNESS     125
+// Luminosité max en mode R5+G6/B5 : 31 + 63 + 31 = 125
+#define MAX_BRIGHTNESS         125
 
 // Nombre max de segments bruts par ligne (suffisant pour 160 px de large)
 #define MAX_SEGMENTS_PER_LINE  32
@@ -21,9 +21,21 @@
 #define MERGE_GAP_TOLERANCE    1
 
 // Seuil de chroma pour considérer un pixel comme "neutre" (pas trop coloré).
-// Chroma = max(R5,G6,B5) - min(R5,G6,B5).
-// 0 = parfaitement gris/noir, plus c'est grand plus la couleur est saturée.
-#define CHROMA_BLACK_MAX       6   // à ajuster si besoin
+// Chroma = max(R,G,B) - min(R,G,B).
+#define CHROMA_BLACK_MAX       6   // à tuner si besoin
+
+// Nombre max de lignes où on garde un sample (>= hauteur max de ton image)
+#define MAX_LINE_SAMPLES       200
+
+// Continuité : écart horizontal max entre centres successifs pour rester
+// dans la même "ligne" (courbe continue).
+#define MAX_CENTER_STEP        20   // pixels, à tuner selon ton cas
+
+// Nombre minimal de points dans la chaîne continue pour accepter une ligne
+#define MIN_CHAIN_LENGTH       5
+
+// Lissage exponentiel des centres
+#define SMOOTH_ALPHA           0.6f  // 0.6 = centre actuel, 0.4 = historique
 
 // -----------------------------------------------------------------------------
 // Extraction des composantes depuis RGB565
@@ -40,7 +52,7 @@ static inline void rgb565_to_components(uint16_t px,
 
 // Retourne :
 //  - brightness : R+G+B (0..125)
-//  - chroma     : max(R,G,B) - min(R,G,B), mesure de saturation/couleur
+//  - chroma     : max(R,G,B) - min(R,G,B)
 static inline void pixel_brightness_chroma(uint16_t px,
                                            uint8_t *brightness,
                                            uint8_t *chroma)
@@ -60,7 +72,6 @@ static inline void pixel_brightness_chroma(uint16_t px,
     *chroma     = (uint8_t)(maxv - minv);    // 0..63
 }
 
-// Version simplifiée quand on n'a besoin que de la luminosité
 static inline int pixel_brightness(uint16_t px)
 {
     uint8_t b, c;
@@ -68,9 +79,7 @@ static inline int pixel_brightness(uint16_t px)
     return (int)b;
 }
 
-// Test "noir" basé sur :
-//  - un seuil dynamique de luminosité (brightness <= threshold)
-//  - une chroma faible (pixel peu coloré, proche d'un gris/noir)
+// Test "noir" : sombre + peu coloré
 static inline bool is_black_with_threshold(uint16_t px, int threshold)
 {
     uint8_t b, c;
@@ -79,21 +88,15 @@ static inline bool is_black_with_threshold(uint16_t px, int threshold)
     if (b > threshold) {
         return false;
     }
-
     if (c > CHROMA_BLACK_MAX) {
         // pixel sombre mais très coloré -> on le rejette
         return false;
     }
-
     return true;
 }
 
 // -----------------------------------------------------------------------------
-// Calcule un seuil de "noir" dynamique en fonction des pixels les plus sombres.
-// - Histogramme des luminosités 0..125.
-// - On prend les N pixels les plus sombres (N <= 1000, ou moins si image petite).
-// - On trouve la luminosité b0 telle que cum_hist(b0) ≈ N.
-// - On définit threshold = b0 + marge.
+// Seuil dynamique de "noir" basé sur les pixels les plus sombres
 // -----------------------------------------------------------------------------
 static int compute_dynamic_black_threshold(const uint16_t *frame,
                                            int width,
@@ -106,7 +109,7 @@ static int compute_dynamic_black_threshold(const uint16_t *frame,
 
     const int total_pixels = width * height;
 
-    // 1) Construire l'histogramme des luminosités
+    // 1) Histogramme des luminosités
     for (int i = 0; i < total_pixels; ++i) {
         int br = pixel_brightness(frame[i]);
         if (br < 0) br = 0;
@@ -120,10 +123,10 @@ static int compute_dynamic_black_threshold(const uint16_t *frame,
         target_dark_count = 1000;
     }
     if (target_dark_count < 100) {
-        target_dark_count = total_pixels; // petites images -> on prend tout
+        target_dark_count = total_pixels;
     }
 
-    // 3) Trouver la luminosité b0 des N pixels les plus sombres
+    // 3) Trouver la luminosité b0 de ces pixels sombres
     int accumulated = 0;
     int b0 = 0;
 
@@ -135,8 +138,8 @@ static int compute_dynamic_black_threshold(const uint16_t *frame,
         }
     }
 
-    // 4) Définir un seuil à partir de b0 avec une petite marge
-    int threshold = b0 + 3;  // marge de 3 niveaux (0..125)
+    // 4) Seuil = b0 + petite marge
+    int threshold = b0 + 3;
 
     if (threshold > MAX_BRIGHTNESS) {
         threshold = MAX_BRIGHTNESS;
@@ -149,24 +152,8 @@ static int compute_dynamic_black_threshold(const uint16_t *frame,
 }
 
 // -----------------------------------------------------------------------------
-// Analyse d'une frame et marquage de la ligne (bord gauche/droit en rouge,
-// centre en vert) sur TOUTES les lignes où une ou plusieurs bandes "noires"
-// sont détectées.
-//
-// - Seuil de noir adaptatif basé sur les pixels les plus sombres de l'image.
-// - Un pixel est "noir" s'il est suffisamment sombre ET peu coloré.
-// - Sur chaque ligne :
-//      1) on détecte tous les segments bruts de pixels noirs,
-//      2) on fusionne ceux qui se chevauchent / sont très proches,
-//      3) on ne dessine que les segments fusionnés :
-//           * bord gauche en rouge
-//           * bord droit en rouge
-//           * centre en vert
-//
-// - Si 'result' != NULL :
-//      - result->found = 1 si AU MOINS un segment a été trouvé sur l'image
-//      - result->row, left_x, right_x, center_x décrivent le premier segment
-//        trouvé en partant du bas (le plus proche du robot).
+// Analyse d'une frame, construit une chaîne continue de centre de ligne,
+// la lisse, et dessine la ligne lissée.
 // -----------------------------------------------------------------------------
 void frame_analyze_line_rgb565(uint16_t *frame,
                                int width,
@@ -184,10 +171,15 @@ void frame_analyze_line_rgb565(uint16_t *frame,
         return;
     }
 
-    // Calcul du seuil de "noir" basé sur les pixels les plus sombres
+    // Seuil dynamique pour le "noir"
     int black_threshold = compute_dynamic_black_threshold(frame, width, height);
 
-    bool first_found = false;
+    // Samples par ligne (au plus un "segment principal" par ligne)
+    int sample_y     [MAX_LINE_SAMPLES];
+    int sample_left  [MAX_LINE_SAMPLES];
+    int sample_right [MAX_LINE_SAMPLES];
+    int sample_center[MAX_LINE_SAMPLES];
+    int sample_count = 0;
 
     if (result) {
         result->found    = 0;
@@ -197,32 +189,30 @@ void frame_analyze_line_rgb565(uint16_t *frame,
         result->center_x = -1;
     }
 
-    // Parcours de l'image de bas en haut
+    // -------------------------------------------------------------------------
+    // PHASE 1 : détection par ligne + fusion de segments
+    // -------------------------------------------------------------------------
     for (int y = height - 1; y >= 0; --y) {
 
-        // ---------------------------------------------------------------------
-        // 1) Détection de tous les segments "bruts" sur cette ligne
-        // ---------------------------------------------------------------------
         int raw_start[MAX_SEGMENTS_PER_LINE];
         int raw_end  [MAX_SEGMENTS_PER_LINE];
         int raw_count = 0;
 
         int x = 0;
         while (x < width) {
-            // Cherche le début d'un segment "noir"
+            // chercher début de segment noir
             while (x < width &&
                    !is_black_with_threshold(frame[y * width + x], black_threshold)) {
                 x++;
             }
 
             if (x >= width) {
-                // Plus de pixel noir sur cette ligne
                 break;
             }
 
             int seg_start = x;
 
-            // Avance tant que les pixels restent noirs
+            // avancer tant que noir
             while (x < width &&
                    is_black_with_threshold(frame[y * width + x], black_threshold)) {
                 x++;
@@ -231,24 +221,18 @@ void frame_analyze_line_rgb565(uint16_t *frame,
             int seg_end   = x - 1;
             int seg_width = seg_end - seg_start + 1;
 
-            // Filtre brut : ignore les segments trop petits (bruit)
             if (seg_width >= MIN_SEGMENT_WIDTH && raw_count < MAX_SEGMENTS_PER_LINE) {
                 raw_start[raw_count] = seg_start;
                 raw_end  [raw_count] = seg_end;
                 raw_count++;
             }
-
-            // On continue la recherche à partir de x
         }
 
         if (raw_count == 0) {
-            // pas de segment significatif sur cette ligne
             continue;
         }
 
-        // ---------------------------------------------------------------------
-        // 2) Fusion des segments qui se chevauchent ou sont très proches
-        // ---------------------------------------------------------------------
+        // Fusion des segments qui se chevauchent / sont très proches
         int merged_start[MAX_SEGMENTS_PER_LINE];
         int merged_end  [MAX_SEGMENTS_PER_LINE];
         int merged_count = 0;
@@ -266,14 +250,11 @@ void frame_analyze_line_rgb565(uint16_t *frame,
                 int last_s   = merged_start[last_idx];
                 int last_e   = merged_end  [last_idx];
 
-                // Chevauchement ou petit gap → fusion
                 if (s <= last_e + MERGE_GAP_TOLERANCE) {
                     if (e > last_e) {
                         merged_end[last_idx] = e;
                     }
-                    // début reste last_s
                 } else {
-                    // Segment distinct, on l'ajoute
                     if (merged_count < MAX_SEGMENTS_PER_LINE) {
                         merged_start[merged_count] = s;
                         merged_end  [merged_count] = e;
@@ -283,35 +264,152 @@ void frame_analyze_line_rgb565(uint16_t *frame,
             }
         }
 
-        // ---------------------------------------------------------------------
-        // 3) Marquage des segments fusionnés + mise à jour éventuelle du résultat
-        // ---------------------------------------------------------------------
+        // Choisir un segment "principal" pour cette ligne (par ex. le plus large)
+        int best_idx   = -1;
+        int best_width = 0;
+
         for (int i = 0; i < merged_count; ++i) {
-            int s = merged_start[i];
-            int e = merged_end  [i];
-            int w = e - s + 1;
-
-            if (w < MIN_SEGMENT_WIDTH) {
-                continue;
-            }
-
-            int center = (s + e) / 2;
-
-            // Marquer les bords et le centre dans l'image
-            frame[y * width + s]      = COLOR_RED;
-            frame[y * width + e]      = COLOR_RED;
-            frame[y * width + center] = COLOR_GREEN;
-
-            // Mettre à jour le résultat logique seulement pour
-            // le premier segment trouvé en partant du bas.
-            if (result && !first_found) {
-                result->found    = 1;
-                result->row      = y;
-                result->left_x   = s;
-                result->right_x  = e;
-                result->center_x = center;
-                first_found      = true;
+            int w = merged_end[i] - merged_start[i] + 1;
+            if (w > best_width) {
+                best_width = w;
+                best_idx   = i;
             }
         }
+
+        if (best_idx < 0) {
+            continue;
+        }
+
+        if (sample_count < MAX_LINE_SAMPLES) {
+            int s = merged_start[best_idx];
+            int e = merged_end  [best_idx];
+            int c = (s + e) / 2;
+
+            sample_y     [sample_count] = y;
+            sample_left  [sample_count] = s;
+            sample_right [sample_count] = e;
+            sample_center[sample_count] = c;
+            sample_count++;
+        }
+    }
+
+    // Aucun échantillon -> aucune ligne détectée
+    if (sample_count == 0) {
+        return;
+    }
+
+    // -------------------------------------------------------------------------
+    // PHASE 2 : construction d'une chaîne continue (courbe) depuis le bas
+    // -------------------------------------------------------------------------
+
+    int chain_idx   [MAX_LINE_SAMPLES];
+    int chain_count = 0;
+
+    // Point de départ : le plus bas (sample 0)
+    chain_idx[chain_count++] = 0;
+    int prev_idx = 0;
+
+    for (int i = 1; i < sample_count; ++i) {
+        int dy = sample_y[i - 1] - sample_y[i];
+        if (dy <= 0) {
+            // normalement > 0 car on parcourt de y=height-1 à 0,
+            // mais on ignore les cas bizarres
+            continue;
+        }
+
+        int dx = sample_center[i] - sample_center[prev_idx];
+        if (dx < 0) dx = -dx;
+
+        if (dx <= MAX_CENTER_STEP) {
+            // cohérent, on continue la chaîne
+            chain_idx[chain_count++] = i;
+            prev_idx = i;
+        } else {
+            // gros saut => on considère que la ligne "continue" s'arrête ici
+            break;
+        }
+
+        if (chain_count >= MAX_LINE_SAMPLES) {
+            break;
+        }
+    }
+
+    // Si la chaîne est trop courte, on considère qu'on n'a pas de ligne fiable
+    if (chain_count < MIN_CHAIN_LENGTH) {
+        return;
+    }
+
+    // -------------------------------------------------------------------------
+    // PHASE 3 : lissage des centres le long de la chaîne
+    // -------------------------------------------------------------------------
+    int smooth_center[MAX_LINE_SAMPLES];
+
+    float c_smooth = (float)sample_center[chain_idx[0]];
+    smooth_center[chain_idx[0]] = (int)(c_smooth + 0.5f);
+
+    for (int k = 1; k < chain_count; ++k) {
+        int idx      = chain_idx[k];
+        float c_raw  = (float)sample_center[idx];
+        c_smooth     = SMOOTH_ALPHA * c_raw + (1.0f - SMOOTH_ALPHA) * c_smooth;
+        smooth_center[idx] = (int)(c_smooth + 0.5f);
+    }
+
+    // Largeur moyenne de la ligne sur cette chaîne
+    long sum_half_w = 0;
+    for (int k = 0; k < chain_count; ++k) {
+        int idx = chain_idx[k];
+        int w   = sample_right[idx] - sample_left[idx] + 1;
+        int hw  = w / 2;
+        if (hw < 1) hw = 1;
+        sum_half_w += hw;
+    }
+
+    int avg_half_w = (int)(sum_half_w / chain_count);
+    if (avg_half_w < 1) avg_half_w = 1;
+
+    // -------------------------------------------------------------------------
+    // PHASE 4 : dessin de la ligne lissée dans la frame
+    // -------------------------------------------------------------------------
+    for (int k = 0; k < chain_count; ++k) {
+        int idx = chain_idx[k];
+        int y   = sample_y[idx];
+        int c   = smooth_center[idx];
+
+        if (c < 0)       c = 0;
+        if (c >= width)  c = width - 1;
+
+        int s = c - avg_half_w;
+        int e = c + avg_half_w;
+
+        if (s < 0)       s = 0;
+        if (e >= width)  e = width - 1;
+
+        frame[y * width + s] = COLOR_RED;
+        frame[y * width + e] = COLOR_RED;
+        frame[y * width + c] = COLOR_GREEN;
+    }
+
+    // -------------------------------------------------------------------------
+    // PHASE 5 : remplir le résultat logique pour le contrôle du robot
+    // -------------------------------------------------------------------------
+    if (result) {
+        int idx0 = chain_idx[0];            // le plus bas de la chaîne
+        int y0   = sample_y[idx0];
+        int c0   = smooth_center[idx0];
+
+        if (c0 < 0)       c0 = 0;
+        if (c0 >= width)  c0 = width - 1;
+
+        int s0 = c0 - avg_half_w;
+        int e0 = c0 + avg_half_w;
+
+        if (s0 < 0)       s0 = 0;
+        if (e0 >= width)  e0 = width - 1;
+
+        result->found    = 1;
+        result->row      = y0;
+        result->left_x   = s0;
+        result->right_x  = e0;
+        result->center_x = c0;
     }
 }
