@@ -34,9 +34,6 @@ pico_sdk_init()
 # Exécutable principal "onee_chan" avec tes fichiers source
 add_executable(onee_chan
     pca9685.c
-    namiko.c
-# Exécutable principal "onee_chan" avec tes fichiers source
-add_executable(onee_chan
     namiko.c          # main()
     ov7670.c          # module caméra
     frame_analysis.c  # analyse de frame / suivi de ligne
@@ -45,6 +42,7 @@ add_executable(onee_chan
 # Dépendances communes
 target_link_libraries(onee_chan
     pico_stdlib
+    pico_multicore
     hardware_adc
     hardware_i2c
     hardware_pwm

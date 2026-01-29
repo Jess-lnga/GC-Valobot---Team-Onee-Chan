@@ -212,9 +212,14 @@ def main():
 
             # Si on a au moins une frame, on l’affiche
             if last_frame is not None:
-                display = last_frame.copy()
-                w, h = last_size
+                #display = last_frame.copy()
+                #w, h = last_size
+                # Rotation -90° (90° sens horaire)
+                display = cv2.rotate(last_frame, cv2.ROTATE_90_CLOCKWISE)
 
+                # Mettre à jour la taille après rotation (width/height inversés)
+                w, h = last_size
+                w, h = h, w
                 # Overlay info
                 txt = f"{w}x{h}"
                 if fps > 0:
