@@ -9,7 +9,7 @@ import cv2
 # ---------------------------------------------------------------------
 # Config port série
 # ---------------------------------------------------------------------
-PORT = "COM4"   # à adapter
+PORT = "COM5"   # à adapter
 BAUD = 115200   # ignoré par l’USB CDC mais requis par pyserial
 
 MAGIC_START = b"OVF0"
