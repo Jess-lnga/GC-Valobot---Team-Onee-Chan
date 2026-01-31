@@ -4,6 +4,7 @@
 
 #include "pca9685.h"
 
+
 /* 
 
 #include <math.h>
@@ -594,8 +595,8 @@ void demo(int mode){
                 pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
                 pca_write_pwm(COXA_BR, 0, to_ticks_us(3000 - us, us_par_tick));
 
-                if(min = 1300){
-                    pca_write_pwm(COXA_FR, 0, to_ticks_us((1500 - min)  + 2600 - us, us_par_tick));   // If min = 1300
+                if(min == 1300){
+                    pca_write_pwm(COXA_FR, 0, to_ticks_us((1500 - min)  + 2600 - us, us_par_tick));   // If min == 1300
                     pca_write_pwm(COXA_BL, 0, to_ticks_us(-(1500 - min) + 400 + us, us_par_tick));
                 }
 
@@ -643,8 +644,8 @@ void demo(int mode){
                 pca_write_pwm(COXA_FL, 0, to_ticks_us(3000 - us, us_par_tick));
 
                 
-                if(min = 1300){
-                    pca_write_pwm(COXA_BL, 0, to_ticks_us((1500 - min)  + 2600 - us, us_par_tick));   // If min = 1300
+                if(min == 1300){
+                    pca_write_pwm(COXA_BL, 0, to_ticks_us((1500 - min)  + 2600 - us, us_par_tick));   // If min == 1300
                     pca_write_pwm(COXA_FR, 0, to_ticks_us(-(1500 - min) + 400 + us, us_par_tick));
                 }
 
