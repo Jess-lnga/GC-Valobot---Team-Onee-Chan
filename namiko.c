@@ -9,11 +9,15 @@
 #include "pca9685.h"
 
 static void core1_entry(void) {
-    init_servo_ctrl();   // DOIT être silencieux (pas de printf)
+    init_servo_ctrl();
 
-    int mode = 6;
+    wake_up();
+    int mode = 1;
+
+
     while (true) {
-        demo(mode);      // DOIT être silencieux (pas de printf)
+        //demo(mode);   
+        move(0, 0, 10*M_PI/180);
     }
 }
 
@@ -39,6 +43,7 @@ int main() {
     static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
 
     while (true) {
+        
         //printf("I am here 0");
         ov7670_capture_frame(frame);
 
@@ -48,8 +53,8 @@ int main() {
 
         ov7670_send_frame_usb(frame);
         //printf("I am here 1");
-
+        
         // Optionnel : petite pause si tu veux limiter le débit
-        // sleep_ms(1);
+        sleep_ms(1);
     }
 }

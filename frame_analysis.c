@@ -1,5 +1,6 @@
 #include "frame_analysis.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 // Quelques couleurs utiles en RGB565
 #define COLOR_RED    0xF800
@@ -16,8 +17,7 @@
 // Nombre max de segments bruts par ligne (suffisant pour 160 px de large)
 #define MAX_SEGMENTS_PER_LINE  32
 
-// Quand on fusionne les segments, tolérance en pixels pour combiner deux
-// segments très proches (petit trou de 1 px par exemple)
+// Tolérance en pixels pour fusionner deux segments proches (trou de 1 px, etc.)
 #define MERGE_GAP_TOLERANCE    1
 
 // Seuil de chroma pour considérer un pixel comme "neutre" (pas trop coloré).
@@ -36,6 +36,27 @@
 
 // Lissage exponentiel des centres
 #define SMOOTH_ALPHA           0.6f  // 0.6 = centre actuel, 0.4 = historique
+
+// -----------------------------------------------------------------------------
+// Rotation -90° (sens horaire) : vue virtuelle (vW=H, vH=W)
+// mapping : (xv,yv) -> (xo,yo) = (yv, H-1-xv)
+// -----------------------------------------------------------------------------
+static inline int rotm90_xo(int xv, int yv) { (void)xv; return yv; }
+static inline int rotm90_yo(int xv, int H)  { return (H - 1) - xv; }
+
+static inline uint16_t get_px_rotm90(const uint16_t *frame, int W, int H, int xv, int yv)
+{
+    int xo = rotm90_xo(xv, yv);
+    int yo = rotm90_yo(xv, H);
+    return frame[yo * W + xo];
+}
+
+static inline void set_px_rotm90(uint16_t *frame, int W, int H, int xv, int yv, uint16_t color)
+{
+    int xo = rotm90_xo(xv, yv);
+    int yo = rotm90_yo(xv, H);
+    frame[yo * W + xo] = color;
+}
 
 // -----------------------------------------------------------------------------
 // Extraction des composantes depuis RGB565
@@ -97,6 +118,7 @@ static inline bool is_black_with_threshold(uint16_t px, int threshold)
 
 // -----------------------------------------------------------------------------
 // Seuil dynamique de "noir" basé sur les pixels les plus sombres
+// (pas besoin de rotation : histogramme identique quelle que soit la vue)
 // -----------------------------------------------------------------------------
 static int compute_dynamic_black_threshold(const uint16_t *frame,
                                            int width,
@@ -154,10 +176,12 @@ static int compute_dynamic_black_threshold(const uint16_t *frame,
 // -----------------------------------------------------------------------------
 // Analyse d'une frame, construit une chaîne continue de centre de ligne,
 // la lisse, et dessine la ligne lissée.
+//
+// Version adaptée : détection faite sur une vue virtuelle rotée de -90°
 // -----------------------------------------------------------------------------
 void frame_analyze_line_rgb565(uint16_t *frame,
-                               int width,
-                               int height,
+                               int width,   // W (original)
+                               int height,  // H (original)
                                line_detection_t *result)
 {
     if (!frame || width <= 0 || height <= 0) {
@@ -170,6 +194,10 @@ void frame_analyze_line_rgb565(uint16_t *frame,
         }
         return;
     }
+
+    // Vue rotée -90° : dimensions virtuelles
+    const int vW = height; // largeur vue rotée
+    const int vH = width;  // hauteur vue rotée
 
     // Seuil dynamique pour le "noir"
     int black_threshold = compute_dynamic_black_threshold(frame, width, height);
@@ -190,35 +218,38 @@ void frame_analyze_line_rgb565(uint16_t *frame,
     }
 
     // -------------------------------------------------------------------------
-    // PHASE 1 : détection par ligne + fusion de segments
+    // PHASE 1 : détection par ligne + fusion de segments (dans la vue rotée)
+    // On parcourt yv du bas vers le haut, comme avant.
     // -------------------------------------------------------------------------
-    for (int y = height - 1; y >= 0; --y) {
+    for (int yv = vH - 1; yv >= 0; --yv) {
 
         int raw_start[MAX_SEGMENTS_PER_LINE];
         int raw_end  [MAX_SEGMENTS_PER_LINE];
         int raw_count = 0;
 
-        int x = 0;
-        while (x < width) {
+        int xv = 0;
+        while (xv < vW) {
             // chercher début de segment noir
-            while (x < width &&
-                   !is_black_with_threshold(frame[y * width + x], black_threshold)) {
-                x++;
+            while (xv < vW &&
+                   !is_black_with_threshold(get_px_rotm90(frame, width, height, xv, yv),
+                                            black_threshold)) {
+                xv++;
             }
 
-            if (x >= width) {
+            if (xv >= vW) {
                 break;
             }
 
-            int seg_start = x;
+            int seg_start = xv;
 
             // avancer tant que noir
-            while (x < width &&
-                   is_black_with_threshold(frame[y * width + x], black_threshold)) {
-                x++;
+            while (xv < vW &&
+                   is_black_with_threshold(get_px_rotm90(frame, width, height, xv, yv),
+                                           black_threshold)) {
+                xv++;
             }
 
-            int seg_end   = x - 1;
+            int seg_end   = xv - 1;
             int seg_width = seg_end - seg_start + 1;
 
             if (seg_width >= MIN_SEGMENT_WIDTH && raw_count < MAX_SEGMENTS_PER_LINE) {
@@ -247,8 +278,7 @@ void frame_analyze_line_rgb565(uint16_t *frame,
                 merged_count    = 1;
             } else {
                 int last_idx = merged_count - 1;
-                int last_s   = merged_start[last_idx];
-                int last_e   = merged_end  [last_idx];
+                int last_e   = merged_end[last_idx];
 
                 if (s <= last_e + MERGE_GAP_TOLERANCE) {
                     if (e > last_e) {
@@ -264,7 +294,7 @@ void frame_analyze_line_rgb565(uint16_t *frame,
             }
         }
 
-        // Choisir un segment "principal" pour cette ligne (par ex. le plus large)
+        // Choisir un segment "principal" pour cette ligne (le plus large)
         int best_idx   = -1;
         int best_width = 0;
 
@@ -285,7 +315,7 @@ void frame_analyze_line_rgb565(uint16_t *frame,
             int e = merged_end  [best_idx];
             int c = (s + e) / 2;
 
-            sample_y     [sample_count] = y;
+            sample_y     [sample_count] = yv;
             sample_left  [sample_count] = s;
             sample_right [sample_count] = e;
             sample_center[sample_count] = c;
@@ -301,7 +331,6 @@ void frame_analyze_line_rgb565(uint16_t *frame,
     // -------------------------------------------------------------------------
     // PHASE 2 : construction d'une chaîne continue (courbe) depuis le bas
     // -------------------------------------------------------------------------
-
     int chain_idx   [MAX_LINE_SAMPLES];
     int chain_count = 0;
 
@@ -312,8 +341,6 @@ void frame_analyze_line_rgb565(uint16_t *frame,
     for (int i = 1; i < sample_count; ++i) {
         int dy = sample_y[i - 1] - sample_y[i];
         if (dy <= 0) {
-            // normalement > 0 car on parcourt de y=height-1 à 0,
-            // mais on ignore les cas bizarres
             continue;
         }
 
@@ -321,11 +348,9 @@ void frame_analyze_line_rgb565(uint16_t *frame,
         if (dx < 0) dx = -dx;
 
         if (dx <= MAX_CENTER_STEP) {
-            // cohérent, on continue la chaîne
             chain_idx[chain_count++] = i;
             prev_idx = i;
         } else {
-            // gros saut => on considère que la ligne "continue" s'arrête ici
             break;
         }
 
@@ -334,7 +359,6 @@ void frame_analyze_line_rgb565(uint16_t *frame,
         }
     }
 
-    // Si la chaîne est trop courte, on considère qu'on n'a pas de ligne fiable
     if (chain_count < MIN_CHAIN_LENGTH) {
         return;
     }
@@ -368,47 +392,47 @@ void frame_analyze_line_rgb565(uint16_t *frame,
     if (avg_half_w < 1) avg_half_w = 1;
 
     // -------------------------------------------------------------------------
-    // PHASE 4 : dessin de la ligne lissée dans la frame
+    // PHASE 4 : dessin de la ligne lissée dans la frame (via SET roté)
     // -------------------------------------------------------------------------
     for (int k = 0; k < chain_count; ++k) {
         int idx = chain_idx[k];
-        int y   = sample_y[idx];
+        int yv  = sample_y[idx];
         int c   = smooth_center[idx];
 
-        if (c < 0)       c = 0;
-        if (c >= width)  c = width - 1;
+        if (c < 0)      c = 0;
+        if (c >= vW)    c = vW - 1;
 
         int s = c - avg_half_w;
         int e = c + avg_half_w;
 
-        if (s < 0)       s = 0;
-        if (e >= width)  e = width - 1;
+        if (s < 0)      s = 0;
+        if (e >= vW)    e = vW - 1;
 
-        frame[y * width + s] = COLOR_RED;
-        frame[y * width + e] = COLOR_RED;
-        frame[y * width + c] = COLOR_GREEN;
+        set_px_rotm90(frame, width, height, s, yv, COLOR_RED);
+        set_px_rotm90(frame, width, height, e, yv, COLOR_RED);
+        set_px_rotm90(frame, width, height, c, yv, COLOR_GREEN);
     }
 
     // -------------------------------------------------------------------------
-    // PHASE 5 : remplir le résultat logique pour le contrôle du robot
+    // PHASE 5 : résultat logique (dans la vue rotée)
     // -------------------------------------------------------------------------
     if (result) {
-        int idx0 = chain_idx[0];            // le plus bas de la chaîne
+        int idx0 = chain_idx[0];     // le plus bas de la chaîne
         int y0   = sample_y[idx0];
         int c0   = smooth_center[idx0];
 
-        if (c0 < 0)       c0 = 0;
-        if (c0 >= width)  c0 = width - 1;
+        if (c0 < 0)      c0 = 0;
+        if (c0 >= vW)    c0 = vW - 1;
 
         int s0 = c0 - avg_half_w;
         int e0 = c0 + avg_half_w;
 
-        if (s0 < 0)       s0 = 0;
-        if (e0 >= width)  e0 = width - 1;
+        if (s0 < 0)      s0 = 0;
+        if (e0 >= vW)    e0 = vW - 1;
 
         result->found    = 1;
-        result->row      = y0;
-        result->left_x   = s0;
+        result->row      = y0;   // coordonnée Y dans vue rotée (0..vH-1)
+        result->left_x   = s0;   // coordonnée X dans vue rotée (0..vW-1)
         result->right_x  = e0;
         result->center_x = c0;
     }

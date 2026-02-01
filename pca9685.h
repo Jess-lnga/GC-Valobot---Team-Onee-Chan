@@ -11,5 +11,6 @@
 //bool debug = false;
 
 void init_servo_ctrl();
-void demo(int mode);
-void move(float D, float theta);
+void demo(int mode );
+void move(float D, float theta_t, float theta_r);
+void wake_up();
