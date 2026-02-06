@@ -7,6 +7,12 @@
 #define COLOR_GREEN  0x07E0
 #define COLOR_BLACK  0x0000
 #define COLOR_WHITE  0xFFFF
+#define COLOR_BLUE   0x001F
+
+// Largeur acceptable de la "ligne" (dans la vue rotée), à tuner selon ton cas
+#define MIN_LINE_WIDTH   6     // rejette segments trop fins (bruit)
+#define MAX_LINE_WIDTH   120   // rejette segments trop larges (grosse tache/ombre)
+
 
 // Largeur minimale d'un segment pour être considéré comme une "vraie ligne"
 #define MIN_SEGMENT_WIDTH      3
@@ -22,7 +28,7 @@
 
 // Seuil de chroma pour considérer un pixel comme "neutre" (pas trop coloré).
 // Chroma = max(R,G,B) - min(R,G,B).
-#define CHROMA_BLACK_MAX       6   // à tuner si besoin
+#define CHROMA_BLACK_MAX       11   // à tuner si besoin
 
 // Nombre max de lignes où on garde un sample (>= hauteur max de ton image)
 #define MAX_LINE_SAMPLES       200
@@ -36,6 +42,13 @@
 
 // Lissage exponentiel des centres
 #define SMOOTH_ALPHA           0.6f  // 0.6 = centre actuel, 0.4 = historique
+
+// Position de la ligne 
+static int line_pos = 80;
+
+int get_line_pos(){
+    return line_pos;
+}
 
 // -----------------------------------------------------------------------------
 // Rotation -90° (sens horaire) : vue virtuelle (vW=H, vH=W)
@@ -435,5 +448,207 @@ void frame_analyze_line_rgb565(uint16_t *frame,
         result->left_x   = s0;   // coordonnée X dans vue rotée (0..vW-1)
         result->right_x  = e0;
         result->center_x = c0;
+    }
+}
+
+
+// -----------------------------------------------------------------------------
+// find_line() : étape 1 -> binarisation noir/blanc
+// -----------------------------------------------------------------------------
+void find_line(uint16_t *frame, int width, int height, int n_points)
+{
+    if (!frame || width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (n_points < 1) {
+        n_points = 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Étape 1 : binarisation noir/blanc
+    // -------------------------------------------------------------------------
+    const int threshold = compute_dynamic_black_threshold(frame, width, height);
+    const int total = width * height;
+
+    for (int i = 0; i < total; ++i) {
+        if (is_black_with_threshold(frame[i], threshold)) {
+            frame[i] = COLOR_BLACK;
+        } else {
+            //frame[i] = COLOR_WHITE;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Étape 2 : détection centre ligne par ligne (vue rotée -90°)
+    // + collecte des N premiers centres proches du bas
+    // -------------------------------------------------------------------------
+    const int vW = height;
+    const int vH = width;
+
+    int prev_center = -1;
+    bool have_prev  = false;
+
+    long sum_centers = 0;
+    int  used_centers = 0;
+    int  y_of_first_used = -1; // y (vue rotée) de la première ligne utilisée (la plus basse)
+
+    for (int yv = vH - 1; yv >= 0; --yv) {
+
+        // 2.1) runs noirs
+        int seg_start[MAX_SEGMENTS_PER_LINE];
+        int seg_end  [MAX_SEGMENTS_PER_LINE];
+        int seg_count = 0;
+
+        int xv = 0;
+        while (xv < vW) {
+            while (xv < vW && get_px_rotm90(frame, width, height, xv, yv) != COLOR_BLACK) {
+                xv++;
+            }
+            if (xv >= vW) break;
+
+            int s = xv;
+            while (xv < vW && get_px_rotm90(frame, width, height, xv, yv) == COLOR_BLACK) {
+                xv++;
+            }
+            int e = xv - 1;
+
+            int w = e - s + 1;
+            if (w >= MIN_SEGMENT_WIDTH && seg_count < MAX_SEGMENTS_PER_LINE) {
+                seg_start[seg_count] = s;
+                seg_end  [seg_count] = e;
+                seg_count++;
+            }
+        }
+
+        if (seg_count == 0) {
+            continue;
+        }
+
+        // 2.2) fusion des segments proches
+        int merged_start[MAX_SEGMENTS_PER_LINE];
+        int merged_end  [MAX_SEGMENTS_PER_LINE];
+        int merged_count = 0;
+
+        for (int i = 0; i < seg_count; ++i) {
+            int s = seg_start[i];
+            int e = seg_end[i];
+
+            if (merged_count == 0) {
+                merged_start[0] = s;
+                merged_end  [0] = e;
+                merged_count = 1;
+            } else {
+                int last = merged_count - 1;
+                if (s <= merged_end[last] + MERGE_GAP_TOLERANCE) {
+                    if (e > merged_end[last]) merged_end[last] = e;
+                } else {
+                    if (merged_count < MAX_SEGMENTS_PER_LINE) {
+                        merged_start[merged_count] = s;
+                        merged_end  [merged_count] = e;
+                        merged_count++;
+                    }
+                }
+            }
+        }
+
+        // 2.3) candidats (largeur plausible)
+        int cand_idx[MAX_SEGMENTS_PER_LINE];
+        int cand_count = 0;
+
+        for (int i = 0; i < merged_count; ++i) {
+            int w = merged_end[i] - merged_start[i] + 1;
+            if (w < MIN_LINE_WIDTH) continue;
+            if (w > MAX_LINE_WIDTH) continue;
+            cand_idx[cand_count++] = i;
+            if (cand_count >= MAX_SEGMENTS_PER_LINE) break;
+        }
+
+        if (cand_count == 0) {
+            continue;
+        }
+
+        // 2.4) choisir segment
+        int best_i = -1;
+
+        if (have_prev) {
+            int best_dx = 0x7FFFFFFF;
+
+            for (int k = 0; k < cand_count; ++k) {
+                int i = cand_idx[k];
+                int c = (merged_start[i] + merged_end[i]) / 2;
+                int dx = c - prev_center; if (dx < 0) dx = -dx;
+                if (dx < best_dx) {
+                    best_dx = dx;
+                    best_i = i;
+                }
+            }
+
+            if (best_i >= 0) {
+                int c  = (merged_start[best_i] + merged_end[best_i]) / 2;
+                int dx = c - prev_center; if (dx < 0) dx = -dx;
+                if (dx > MAX_CENTER_STEP) {
+                    continue;
+                }
+            }
+        } else {
+            int best_w = -1;
+            for (int k = 0; k < cand_count; ++k) {
+                int i = cand_idx[k];
+                int w = merged_end[i] - merged_start[i] + 1;
+                if (w > best_w) {
+                    best_w = w;
+                    best_i = i;
+                }
+            }
+        }
+
+        if (best_i < 0) {
+            continue;
+        }
+
+        int s = merged_start[best_i];
+        int e = merged_end[best_i];
+        int w = e - s + 1;
+
+        if (w <= 1) { // robustesse "un seul pixel"
+            continue;
+        }
+
+        int center = (s + e) / 2;
+
+        // 2.5) affiche le centre en bleu
+        set_px_rotm90(frame, width, height, center, yv, COLOR_BLUE);
+
+        // 2.6) collecte des N premiers centres proches du bas
+        if (used_centers < n_points) {
+            sum_centers += center;
+            used_centers++;
+
+            if (y_of_first_used < 0) {
+                y_of_first_used = yv; // première ligne utilisée = la plus basse rencontrée
+            }
+        }
+
+        // update continuité
+        prev_center = center;
+        have_prev = true;
+
+        // option : dès qu’on a N centres, on peut continuer à dessiner (bleu)
+        // ou arrêter plus tôt. Ici on continue pour debug visuel complet.
+    }
+
+    // -------------------------------------------------------------------------
+    // Étape 3 : moyenne des N points bas + affichage en rouge
+    // -------------------------------------------------------------------------
+    if (used_centers > 0 && y_of_first_used >= 0) {
+        int avg_center = (int)((sum_centers + (used_centers / 2)) / used_centers); // arrondi
+
+        if (avg_center < 0)   avg_center = 0;
+        if (avg_center >= vW) avg_center = vW - 1;
+
+        // Dessiner le point rouge sur la ligne la plus basse utilisée
+        set_px_rotm90(frame, width, height, avg_center, y_of_first_used, COLOR_RED);
+        line_pos = avg_center;
     }
 }

@@ -34,6 +34,12 @@ void frame_analyze_line_rgb565(uint16_t *frame,
                                int height,
                                line_detection_t *result);
 
+int get_line_pos();
+
+//void find_line(uint16_t *frame, int width, int height);
+
+void find_line(uint16_t *frame, int width, int height, int n_points);
+
 #ifdef __cplusplus
 }
 #endif
