@@ -123,11 +123,13 @@ void init_servo_ctrl(){
 }
 
 void move(float D, float theta_t, float theta_r){
-    int ticks_min = 1300;
+    int ticks_min = 1000;
     int ticks_max = 3000 - ticks_min;
     int ticks_middle = 1500;
 
-    float angle_rad_max = (34*M_PI)/180;
+    float angle_deg_max = 45; // Previously 34
+
+    float angle_rad_max = (angle_deg_max*M_PI)/180;
     float slope = (ticks_max - ticks_middle)/angle_rad_max;
 
     float d_l = D*sin(M_PI/4.0 - theta_t);
@@ -193,8 +195,8 @@ void move(float D, float theta_t, float theta_r){
     
     
     //------- Mouvement parameters -------//
-    int air_step   = 20;
-    int floor_step = 15;
+    int air_step   = 25;
+    int floor_step = 12;   // Good values: air --> 22; floor --> 18
 
     int step = air_step;
 
@@ -789,8 +791,8 @@ void demo(int mode){
         //int air_step   = 25;
         //int floor_step = 15;
 
-        int air_step   = 10;
-        int floor_step = 5;
+        int air_step   = 25;
+        int floor_step = 20;
 
         int step = air_step;
 
