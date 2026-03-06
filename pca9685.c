@@ -921,8 +921,12 @@ void demo(int mode){
 
     if(mode == 7){ // Identification of channels
         int step = 10; 
-        int channel = 5;
+        int channel = 0;
+        int channel_1 = 0;
+
+        pca_write_pwm(channel, 0, to_ticks_us(1500, us_par_tick));
         
+        /*
         for (int us = 2000; us >= 1000; us -= step) {
             pca_write_pwm(channel, 0, to_ticks_us(us, us_par_tick));
             sleep_ms(10);   
@@ -935,6 +939,9 @@ void demo(int mode){
             sleep_ms(10);   
         }
         sleep_ms(1000);
+        */
+
+        
     }
 
     if(mode == 8){ // Movement with smooth transitions between translation and rotation

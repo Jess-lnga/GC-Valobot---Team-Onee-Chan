@@ -3,17 +3,12 @@
     "configurations": [
         {
             "name": "Pico",
-
-            // Chemin vers arm-none-eabi-gcc du toolchain Pico
-            // (via l'install .pico-sdk que tu utilises déjà)
+            "configurationProvider": "ms-vscode.cmake-tools",
+            "compileCommands": "${workspaceFolder}/compile_commands.json",
             "compilerPath": "C:/Users/Jérôme ESSOLA ELANGA/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc.exe",
-
             "intelliSenseMode": "gcc-arm",
             "cStandard": "c11",
-            "cppStandard": "c++17",
-
-            // Demande à CMake Tools de fournir la configuration exacte
-            "configurationProvider": "ms-vscode.cmake-tools"
+            "cppStandard": "c++17"
         }
     ]
 }
