@@ -15,15 +15,15 @@
 #define PRE_SCALE     0xFE
 #define LED0_ON_L     0x06   // LEDn_ON_L = 0x06 + 4*n
 
-#define COXA_FL 2
-#define COXA_FR 12
-#define COXA_BL 13
-#define COXA_BR 3
+#define COXA_FL 11
+#define COXA_FR 4
+#define COXA_BL 9
+#define COXA_BR 7
  
-#define TROC_FL 5
-#define TROC_FR 8
-#define TROC_BL 4
-#define TROC_BR 9
+#define TROC_FL 10
+#define TROC_FR 6
+#define TROC_BL 8
+#define TROC_BR 5
 
 #define LEG_L (float)4.3
 #define LEG_R (float)6.0 
@@ -921,12 +921,12 @@ void demo(int mode){
 
     if(mode == 7){ // Identification of channels
         int step = 10; 
-        int channel = 0;
+        int channel = 11;
         int channel_1 = 0;
 
-        pca_write_pwm(channel, 0, to_ticks_us(1500, us_par_tick));
+        pca_write_pwm(channel_1, 0, to_ticks_us(1500, us_par_tick));
         
-        /*
+        
         for (int us = 2000; us >= 1000; us -= step) {
             pca_write_pwm(channel, 0, to_ticks_us(us, us_par_tick));
             sleep_ms(10);   
@@ -939,7 +939,7 @@ void demo(int mode){
             sleep_ms(10);   
         }
         sleep_ms(1000);
-        */
+        
 
         
     }

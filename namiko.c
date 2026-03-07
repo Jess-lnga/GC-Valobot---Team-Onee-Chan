@@ -13,7 +13,7 @@ static void core1_entry(void) {
     init_servo_ctrl();
 
     wake_up();
-    int mode = 7;
+    int mode = 6;
     
     float angle_r = -1;
     float angle_t = 0;
