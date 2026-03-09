@@ -30,22 +30,35 @@ void follow_line_testing(){
     //printf("%d\r\n", rotation_angle_us);
 }
 
-static float D = 4;
+static float D = 3;
 static float angle = 0;
-static float K_P = 0.3;
+
+static float K_P = 0.1;
+static float K_I = 0.01;
+
+static float error_I = 0;
 
 #define ABS_ANGLE_MAX 30
+#define ABS_ERROR_I_MAX 400
 
 
 void follow_line(){
     float line_pos = get_line_pos();
     error = line_pos - CENTER;
+    error_I += error;
 
-    angle = K_P * error;
-    if(angle > ABS_ANGLE_MAX){ angle = ABS_ANGLE_MAX;}
+    if(error_I >   ABS_ERROR_I_MAX){error_I =  ABS_ERROR_I_MAX;}
+    if(error_I < - ABS_ERROR_I_MAX){error_I = -ABS_ERROR_I_MAX;}
+
+
+    angle = K_P * error + K_I * error_I;
+
+    if(angle >   ABS_ANGLE_MAX){ angle =   ABS_ANGLE_MAX;}
     if(angle < - ABS_ANGLE_MAX){ angle = - ABS_ANGLE_MAX;}
 
-    //printf("Line params: LINE_POS = %.2f ERROR = %.2f ROTATION ANGLE = %.2f\r\n", line_pos, error, angle);
+    printf("-----------------------------------------------------------------------------------------\n");
+    printf("Line params: LINE_POS = %.2f ERROR = %.2f ERROR_I = %.2f ROTATION ANGLE = %.2f\r\n", line_pos, error, error_I, angle);
+    //printf("-----------------------------------------------------------------------------------------\n");
     
 
     move(D, 0, angle*M_PI/180.0);

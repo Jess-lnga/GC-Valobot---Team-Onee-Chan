@@ -57,7 +57,7 @@ int main() {
         //frame_analyze_line_rgb565(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, &det);
 
         find_line(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, 5);
-        ov7670_send_frame_usb(frame);
+        //ov7670_send_frame_usb(frame);
         
         sleep_ms(1);
     }
