@@ -25,8 +25,12 @@
 #define TROC_BL 8
 #define TROC_BR 5
 
-#define LEG_L (float)4.3
+#define INVALID_CHANNEL -1
+
+#define LEG_L (float)4.9
 #define LEG_R (float)6.0 
+
+static int servo_offset[16] = {0};
 
 // ------------------------------------------------ //
 //bool debug = false;
@@ -46,12 +50,47 @@ static void pca_write8(uint8_t reg, uint8_t val) {
     uint8_t buf[2] = {reg, val};
     (void)i2c_write_blocking(I2C_PORT, PCA_ADDR, buf, 2, false);
 }
+/// ////////////////////////////////////////////////////////////////////////// ///
+static void pca_write_pwm_offset(uint8_t channel, uint16_t on, uint16_t off, int offset) {
+    int corrected_off = (int)off + offset;
 
-static void pca_write_pwm(uint8_t channel, uint16_t on, uint16_t off) {
+    int min_ticks = to_ticks_us(1000, us_par_tick);
+    int max_ticks = to_ticks_us(2000, us_par_tick);
+
+    if (corrected_off < min_ticks) {
+        corrected_off = min_ticks;
+    }
+    if (corrected_off > max_ticks) {
+        corrected_off = max_ticks;
+    }
+
     uint8_t reg = LED0_ON_L + 4 * channel;
-    uint8_t buf[5] = {reg, on & 0xFF, on >> 8, off & 0xFF, off >> 8};
+    uint8_t buf[5] = {
+        reg,
+        on & 0xFF,
+        on >> 8,
+        corrected_off & 0xFF,
+        corrected_off >> 8
+    };
+
     (void)i2c_write_blocking(I2C_PORT, PCA_ADDR, buf, 5, false);
 }
+
+
+static void pca_write_pwm(uint8_t channel, uint16_t on, uint16_t off) {
+    //uint8_t reg = LED0_ON_L + 4 * channel;
+    //uint8_t buf[5] = {reg, on & 0xFF, on >> 8, off & 0xFF, off >> 8};
+    //(void)i2c_write_blocking(I2C_PORT, PCA_ADDR, buf, 5, false);
+    
+    if (channel >= 16) {
+        return;
+    }
+
+    
+    pca_write_pwm_offset(channel, on, off, to_ticks_us(servo_offset[channel], us_par_tick));
+}
+
+/// ////////////////////////////////////////////////////////////////////////// ///
 
 static uint8_t pca_read8(uint8_t reg) {
     uint8_t val;
@@ -107,6 +146,16 @@ static void i2c_scan(void) {
 
 void init_servo_ctrl(){
     //stdio_init_all();
+
+    servo_offset[COXA_BL] = 100;
+    servo_offset[COXA_BR] = 0;
+    servo_offset[COXA_FL] = 10;
+    servo_offset[COXA_FR] = 0;
+    
+    servo_offset[TROC_BL] = 0;
+    servo_offset[TROC_BR] = 100;
+    servo_offset[TROC_FL] = 0;
+    servo_offset[TROC_FR] = -50;
 
     // Init I2C à 400 kHz
     i2c_init(I2C_PORT, 400 * 1000);
@@ -195,8 +244,8 @@ void move(float D, float theta_t, float theta_r){
     
     
     //------- Mouvement parameters -------//
-    int air_step   = 25;
-    int floor_step = 12;   // Good values: air --> 22; floor --> 18
+    int air_step   = 17;
+    int floor_step = 22;   // Good values: air --> 22; floor --> 18
 
     int step = air_step;
 
@@ -358,6 +407,104 @@ void move(float D, float theta_t, float theta_r){
     }
 }
 
+
+void get_cmd(char *buffer, size_t size) {
+    size_t index = 0;
+
+    while (true){
+        int c = getchar();
+
+        if (c == '\r') {
+            continue;                 // ignore CR
+        }
+
+        if (c == '\n') {
+            break;                    // fin de ligne
+        }
+
+        if (index < size - 1) {
+            buffer[index++] = (char)c;
+        }
+    }
+
+    buffer[index] = '\0';
+}
+
+void print_help(int mode){
+    if(mode == 0){
+        printf("----------------------------------------------------------------------------------------\n");
+        printf("You are in the initial mode. You can have access to the following submodes: \n");
+        printf("- Servo control --> type servo_ctrl\n");
+        printf("----------------------------------------------------------------------------------------\n");
+    }
+
+    if(mode == 1){
+        printf("----------------------------------------------------------------------------------------\n");
+        printf("You are in the servo ctrl mode. You can affect PWM to each servomotor individually\n");
+        printf("You need to enter the channel of the servo you want to control. For example: COXA_FL\n");
+        printf("If you want to go back to the main menu - type back\n");
+        printf("----------------------------------------------------------------------------------------\n");
+    }
+
+    if(mode == 2){
+        printf("----------------------------------------------------------------------------------------\n");
+        printf("You chose to control servo motor on channel xxx. \n");
+        printf("You are expected to enter a value between 1000 and 2000 - values of ticks\n");
+        printf("If you want to go back to channel selection - type back \n");
+        printf("----------------------------------------------------------------------------------------\n");
+    } 
+}
+
+int handle_back(int mode){
+    if(mode == 1){
+        printf("----------------------------------------------------------------------------------------\n");
+        printf("Moved to initial mode\n");
+        printf("----------------------------------------------------------------------------------------\n");
+        return 0;
+    }
+
+    if(mode == 2){
+        printf("----------------------------------------------------------------------------------------\n");
+        printf("Moved to channel selection mode\n");
+        printf("----------------------------------------------------------------------------------------\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+int channel_selection(char *cmd){
+    if(strcmp(cmd, "COXA_FL") == 0){
+        return COXA_FL;
+    
+    }else if(strcmp(cmd, "COXA_FR") == 0){
+        return COXA_FR;
+    
+    }else if(strcmp(cmd, "COXA_BL") == 0){
+        return COXA_BL;
+    
+    } else if(strcmp(cmd, "COXA_BR") == 0){
+        return COXA_BR;
+    
+    } else if(strcmp(cmd, "TROC_FL") == 0){
+        return TROC_FL;
+    
+    } else if(strcmp(cmd, "TROC_FR") == 0){
+        return TROC_FR;
+    
+    } else if(strcmp(cmd, "TROC_BL") == 0){
+        return TROC_BL;
+    
+    } else if(strcmp(cmd, "TROC_BR") == 0){
+        return TROC_BR;
+    }else{
+        return INVALID_CHANNEL;
+    }   
+}
+
+
+
+
 void demo(int mode){
     if(mode == 0){ //Mini demo up down and quick look around!
 
@@ -465,73 +612,64 @@ void demo(int mode){
         pca_write_pwm(TROC_FR, 0, to_ticks_us(us_troca, us_par_tick));
     }
 
-    if(mode == 2){
-        int us = 1500;
-        pca_write_pwm(4, 0, to_ticks_us(us, us_par_tick));
-        pca_write_pwm(5, 0, to_ticks_us(us, us_par_tick));
-        pca_write_pwm(8, 0, to_ticks_us(us, us_par_tick));
-        pca_write_pwm(9, 0, to_ticks_us(us, us_par_tick));
+    if(mode == 2){ //Rise legs
+        if(initialize){
+            int us = 1500;
+        
+            pca_write_pwm(COXA_BL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(COXA_FL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
 
-        us = 1500;
 
-        pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-        pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-        pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-        pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-        for (int us = 1500; us <= 2000; us += 25) {
-            //uint16_t ticks = to_ticks_us(us, us_par_tick);
-
-            pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-            //pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            //pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-            sleep_ms(10);   
+            pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
+            initialize = false;
         }
 
-        for (int us = 2000; us >= 1500; us -= 25) {
-            //uint16_t ticks = to_ticks_us(us, us_par_tick);
+        int step = 10;
+        /*
+        for(int us = 1500; us <= 2000; us += step){
+            pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
 
-            pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-            //pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            //pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-            sleep_ms(10);   
+            sleep_ms(10);
         }
 
-        //////////// TRANSITION /////////////
+        for(int us = 2000; us >= 1500; us -= step){
+            pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
 
-            for (int us = 1500; us <= 2000; us += 25) {
-            //uint16_t ticks = to_ticks_us(us, us_par_tick);
+            sleep_ms(10);
+        }
+        */
 
-            //pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            //pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
+        pca_write_pwm(TROC_BL, 0, to_ticks_us(2000, us_par_tick));
+        pca_write_pwm(TROC_FR, 0, to_ticks_us(2000, us_par_tick));
 
-            pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
+        
+        
+        /*
+        for(int us = 1500; us <= 2000; us += step){
+            pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
 
-            sleep_ms(10);   
+            sleep_ms(10);
         }
 
-        for (int us = 2000; us >= 1500; us -= 25) {
-            //uint16_t ticks = to_ticks_us(us, us_par_tick);
+        for(int us = 2000; us >= 1500; us -= step){
+            pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
 
-            //pca_write_pwm(2, 0, to_ticks_us(us, us_par_tick));
-            //pca_write_pwm(12, 0, to_ticks_us(us, us_par_tick));
-
-            pca_write_pwm(3, 0, to_ticks_us(us, us_par_tick));
-            pca_write_pwm(13, 0, to_ticks_us(us, us_par_tick));
-
-            sleep_ms(10);   
+            sleep_ms(10);
         }
+        */
     }
     
     if(mode == 3){ // Spin around
-        int step = 20;
+        int step = 15;
         if(initialize){
             int us = 1500;
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us, us_par_tick));
@@ -560,7 +698,7 @@ void demo(int mode){
             sleep_ms(10);   
         }
 
-        for (int us = 1100; us <= 1500; us += step) {
+        for (int us = 1000; us <= 1500; us += step) {
             //uint16_t ticks = to_ticks_us(us, us_par_tick);
 
             pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
@@ -569,7 +707,7 @@ void demo(int mode){
             sleep_ms(10);   
         }
         
-        for (int us = 1500; us >= 1100; us -= step) {
+        for (int us = 1500; us >= 1000; us -= step) {
             //uint16_t ticks = to_ticks_us(us, us_par_tick);
 
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
@@ -596,7 +734,7 @@ void demo(int mode){
             sleep_ms(10);   
         }
 
-        for (int us = 1100; us <= 1500; us += step) {
+        for (int us = 1000; us <= 1500; us += step) {
             //uint16_t ticks = to_ticks_us(us, us_par_tick);
 
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us, us_par_tick));
@@ -605,7 +743,7 @@ void demo(int mode){
             sleep_ms(10);   
         }
 
-        for (int us = 1500; us >= 1100; us -= step) {
+        for (int us = 1500; us >= 1000; us -= step) {
             //uint16_t ticks = to_ticks_us(us, us_par_tick);
 
             pca_write_pwm(COXA_BR, 0, to_ticks_us(us, us_par_tick));
@@ -1049,7 +1187,69 @@ void demo(int mode){
         //pca_write_pwm(TROC_FL, 0, to_ticks_us(us_troca, us_par_tick));
         //pca_write_pwm(TROC_FR, 0, to_ticks_us(us_troca, us_par_tick)); 
     }
+
+    if(mode == 10){ // Interactive callibration
+        
+        int servo_channel = INVALID_CHANNEL;
+        int ticks = 1000;
+        
+        int mode = 0;
+        char cmd[64];
+
+        while(true){
+            
+            
+            get_cmd(cmd, sizeof(cmd));
+            printf("----------------------------------------------------------------------------------------\n");
+            printf("Command: %s\n", cmd);
+            printf("----------------------------------------------------------------------------------------\n");
+
+            
+            
+            
+            if (strcmp(cmd, "help") == 0){
+                print_help(mode);
+
+            }else if(strcmp(cmd, "back") == 0){
+                mode = handle_back(mode);
+
+            }
+            
+            
+            else if(mode == 0){ //Initial mode
+                if (strcmp(cmd, "servo_ctrl") == 0){
+                    printf("Enter servo channel\n");
+
+                    mode = 1;    
+                }
+
+            }else if(mode == 1){ //Waiting for servo channel
+                servo_channel = channel_selection(cmd);
+
+                if(servo_channel != INVALID_CHANNEL){
+                    printf("Enter ticks - Between 1000 and 2000\n");
+                    mode = 2;
+                }else{
+                    printf("Invalid servo channel\n");
+                } 
+                
+            } else if (mode == 2){ //Waiting for servo ticks
+                long staff_value = strtol(cmd, NULL, 10);
+                ticks = (int)staff_value;
+
+                if((ticks >= 1000)&&(ticks <= 2000)){
+                    pca_write_pwm(servo_channel, 0, to_ticks_us(ticks, us_par_tick));
+                }else{
+                    printf("Invalid value for ticks\n");
+                }
+            }  
+            
+        }
+        
+    }
 }
+
+
 
 void turn_without_moving(int angle_us){
     if(angle_us >= 1800){angle_us = 1800;}

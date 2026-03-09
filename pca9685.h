@@ -5,8 +5,12 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include <string.h>
+
+
 
 //bool debug = false;
 

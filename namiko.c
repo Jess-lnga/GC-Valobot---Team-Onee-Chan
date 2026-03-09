@@ -13,18 +13,18 @@ static void core1_entry(void) {
     init_servo_ctrl();
 
     wake_up();
-    int mode = 6;
+    int mode = 2;
     
-    float angle_r = -1;
+    float angle_r = 0;
     float angle_t = 0;
     float D = 3;
 
     sleep_ms(2000);
 
     while (true){
-        demo(mode); 
+        //demo(mode); 
         //move(D, angle_t*M_PI/180, angle_r*M_PI/180);
-        //follow_line();
+        follow_line();
         //follow_line_testing();
     }
 }
