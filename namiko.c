@@ -26,7 +26,8 @@ static void core1_entry(void) {
         //move(D, angle_t*M_PI/180, angle_r*M_PI/180);
         //follow_line();
         //follow_line_testing();
-        follow_line_step();
+        //follow_line_step();
+        target_align_step();
     }
 }
 
@@ -59,9 +60,13 @@ int main() {
 
         //find_line(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, 5);
         
-        line_detection_t line_result;
-        analyze_line_and_update_state(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, &line_result);
-
+        //line_detection_t line_result;
+        //analyze_line_and_update_state(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, &line_result);
+        
+        
+        target_detection_t target_result;
+        find_target_and_update_state(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, &target_result);
+        
         ov7670_send_frame_usb(frame);
         
         sleep_ms(1);

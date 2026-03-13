@@ -1,6 +1,7 @@
 #include "frame_analysis.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 
 // Couleurs debug RGB565
 #define COLOR_RED    0xF800
@@ -27,22 +28,22 @@
 #define BOTTOM_BAND_HEIGHT       15   // bande basse de l'image rotée
 
 // Robustesse temporelle
-#define MAX_POSITION_JUMP        50   // saut max accepté entre deux frames valides
-#define POSITION_SMOOTH_ALPHA_NUM  3  // alpha = 3/4
-#define POSITION_SMOOTH_ALPHA_DEN  4
+#define MAX_POSITION_JUMP          50   // saut max accepté entre deux frames valides
+#define POSITION_SMOOTH_ALPHA_NUM   3   // alpha = 3/4
+#define POSITION_SMOOTH_ALPHA_DEN   4
 
 // Hystérésis de détection
-#define LOST_FRAMES_THRESHOLD      3  // perte réelle après 3 frames invalides
-#define FOUND_FRAMES_THRESHOLD     2  // retrouvée après 2 frames valides
+#define LOST_FRAMES_THRESHOLD      3    // perte réelle après 3 frames invalides
+#define FOUND_FRAMES_THRESHOLD     2    // retrouvée après 2 frames valides
 
 // -----------------------------------------------------------------------------
-// État global de suivi
+// État global de suivi de ligne
 // -----------------------------------------------------------------------------
 static int g_line_pos       = 60; // dernière position filtrée publiée
 static int g_line_found     = 0;
 static int g_last_seen_side = 0;  // -1 gauche, +1 droite, 0 inconnu
 
-// État interne de robustesse temporelle
+// État interne de robustesse temporelle (ligne)
 static int g_has_valid_pos           = 0;
 static int g_last_valid_raw_center   = 60;
 static int g_filtered_center         = 60;
@@ -199,7 +200,7 @@ static int compute_dynamic_black_threshold(const uint16_t *frame, int width, int
 }
 
 // -----------------------------------------------------------------------------
-// Analyse principale
+// Analyse ligne principale
 // -----------------------------------------------------------------------------
 void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_detection_t *result)
 {
@@ -482,16 +483,13 @@ void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_
         }
 
         if (g_line_found) {
-            // déjà trouvée, on reste en mode trouvé
             g_line_found = 1;
         } else {
-            // retrouvaille uniquement après plusieurs frames valides
             if (g_consecutive_found_frames >= FOUND_FRAMES_THRESHOLD) {
                 g_line_found = 1;
             }
         }
     } else {
-        // frame invalide, y compris saut rejeté
         if (g_consecutive_lost_frames >= LOST_FRAMES_THRESHOLD) {
             g_line_found = 0;
         }
@@ -499,12 +497,10 @@ void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_
 
     // -------------------------------------------------------------------------
     // Debug visuel de la position filtrée
-    // On ne dessine le point rouge que si la frame courante était valide
     // -------------------------------------------------------------------------
     if (frame_valid && used_count > 0) {
         set_px_rotm90(frame, width, height, g_line_pos, used_rows[0], COLOR_RED);
     } else if (jump_rejected && used_count > 0) {
-        // Optionnel: dessiner le brut rejeté en vert pour debug
         if (raw_avg_center >= 0 && raw_avg_center < vW) {
             set_px_rotm90(frame, width, height, raw_avg_center, used_rows[0], COLOR_GREEN);
         }
@@ -512,7 +508,6 @@ void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_
 
     // -------------------------------------------------------------------------
     // Remplissage du résultat
-    // result->found indique si la ligne est actuellement validée pour le contrôle
     // -----------------------------------------------------------------------------
     if (result) {
         result->found    = g_line_found;
@@ -522,6 +517,279 @@ void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_
             result->row      = used_rows[0];
             result->left_x   = best_left_at_bottom;
             result->right_x  = best_right_at_bottom;
+        }
+    }
+}
+
+// ============================================================================
+// ======================= DÉTECTION DE CIBLE BLEUE ===========================
+// ============================================================================
+
+// Sous-échantillonnage spatial
+#define TARGET_SAMPLE_STEP_X          4
+#define TARGET_SAMPLE_STEP_Y          4
+
+// Filtre bleu simple et large
+#define TARGET_BLUE_MIN_B5            8
+#define TARGET_BLUE_MIN_CHROMA        6
+#define TARGET_BLUE_MARGIN_R          4
+#define TARGET_BLUE_MARGIN_G          2
+
+// Validation minimale
+#define TARGET_MIN_BLUE_POINTS        6
+
+// Robustesse temporelle cible
+#define TARGET_MAX_POSITION_JUMP      45
+#define TARGET_SMOOTH_ALPHA_NUM        3
+#define TARGET_SMOOTH_ALPHA_DEN        4
+#define TARGET_LOST_FRAMES_THRESHOLD   3
+#define TARGET_FOUND_FRAMES_THRESHOLD  2
+
+// État global de suivi de cible (complètement indépendant du suivi de ligne)
+static int g_target_found = 0;
+static int g_target_pos_x = 0;
+static int g_target_pos_y = 0;
+static int g_target_last_seen_side = 0; // -1 gauche, +1 droite, 0 inconnu
+
+static int g_target_has_valid_pos = 0;
+static int g_target_last_valid_raw_x = 0;
+static int g_target_last_valid_raw_y = 0;
+static int g_target_filtered_x = 0;
+static int g_target_filtered_y = 0;
+
+static int g_target_consecutive_lost_frames = 0;
+static int g_target_consecutive_found_frames = 0;
+
+int get_target_pos_x(void)
+{
+    return g_target_pos_x;
+}
+
+int get_target_pos_y(void)
+{
+    return g_target_pos_y;
+}
+
+int is_target_found(void)
+{
+    return g_target_found;
+}
+
+int get_target_last_seen_side(void)
+{
+    return g_target_last_seen_side;
+}
+
+static int smooth_target_int(int old_value, int new_value)
+{
+    int num = TARGET_SMOOTH_ALPHA_NUM;
+    int den = TARGET_SMOOTH_ALPHA_DEN;
+    return (num * new_value + (den - num) * old_value + den / 2) / den;
+}
+
+// Filtre bleu simple et peu coûteux
+static inline bool is_blue_target_pixel(uint16_t px)
+{
+    uint8_t r5, g6, b5;
+    rgb565_to_components(px, &r5, &g6, &b5);
+
+    int g5 = (g6 + 1) >> 1; // approx 6 bits -> 5 bits
+
+    int maxv = r5;
+    if (g5 > maxv) maxv = g5;
+    if (b5 > maxv) maxv = b5;
+
+    int minv = r5;
+    if (g5 < minv) minv = g5;
+    if (b5 < minv) minv = b5;
+
+    int chroma = maxv - minv;
+
+    if (b5 < TARGET_BLUE_MIN_B5) return false;
+    if (chroma < TARGET_BLUE_MIN_CHROMA) return false;
+
+    // Le bleu doit dominer rouge et vert
+    if (b5 < (int)r5 + TARGET_BLUE_MARGIN_R) return false;
+    if (b5 < g5 + TARGET_BLUE_MARGIN_G) return false;
+
+    return true;
+}
+
+void find_target_and_update_state(uint16_t *frame, int width, int height, target_detection_t *result)
+{
+    if (result) {
+        result->found             = 0;
+        result->center_x          = -1;
+        result->center_y          = -1;
+        result->first_pass_points = 0;
+        result->used_points       = 0;
+        result->std_x             = 0;
+        result->std_y             = 0;
+        result->bbox_left         = -1;
+        result->bbox_right        = -1;
+        result->bbox_top          = -1;
+        result->bbox_bottom       = -1;
+    }
+
+    if (!frame || width <= 0 || height <= 0) {
+        g_target_consecutive_lost_frames++;
+        g_target_consecutive_found_frames = 0;
+
+        if (g_target_consecutive_lost_frames >= TARGET_LOST_FRAMES_THRESHOLD) {
+            g_target_found = 0;
+        }
+        return;
+    }
+
+    const int center_ref = width / 2;
+
+    // -------------------------------------------------------------------------
+    // 1) Une seule passe sous-échantillonnée : moyenne des pixels bleus
+    // -------------------------------------------------------------------------
+    int blue_count = 0;
+    long sum_x = 0;
+    long sum_y = 0;
+
+    int bbox_left = width;
+    int bbox_right = -1;
+    int bbox_top = height;
+    int bbox_bottom = -1;
+
+    for (int y = 0; y < height; y += TARGET_SAMPLE_STEP_Y) {
+        int row_offset = y * width;
+
+        for (int x = 0; x < width; x += TARGET_SAMPLE_STEP_X) {
+            uint16_t px = frame[row_offset + x];
+
+            if (!is_blue_target_pixel(px)) {
+                continue;
+            }
+
+            blue_count++;
+            sum_x += x;
+            sum_y += y;
+
+            if (x < bbox_left)   bbox_left = x;
+            if (x > bbox_right)  bbox_right = x;
+            if (y < bbox_top)    bbox_top = y;
+            if (y > bbox_bottom) bbox_bottom = y;
+        }
+    }
+
+    if (result) {
+        result->first_pass_points = blue_count;
+    }
+
+    // -------------------------------------------------------------------------
+    // 2) Validation simple
+    // -------------------------------------------------------------------------
+    bool frame_valid = true;
+    int raw_center_x = -1;
+    int raw_center_y = -1;
+
+    if (blue_count < TARGET_MIN_BLUE_POINTS) {
+        frame_valid = false;
+    } else {
+        raw_center_x = (int)((sum_x + blue_count / 2) / blue_count);
+        raw_center_y = (int)((sum_y + blue_count / 2) / blue_count);
+
+        raw_center_x = clamp_int(raw_center_x, 0, width - 1);
+        raw_center_y = clamp_int(raw_center_y, 0, height - 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // 3) Rejet des sauts aberrants inter-frame
+    // -------------------------------------------------------------------------
+    bool jump_rejected = false;
+
+    if (frame_valid && g_target_has_valid_pos) {
+        int dx = iabs_int(raw_center_x - g_target_last_valid_raw_x);
+        int dy = iabs_int(raw_center_y - g_target_last_valid_raw_y);
+
+        if (dx > TARGET_MAX_POSITION_JUMP || dy > TARGET_MAX_POSITION_JUMP) {
+            frame_valid = false;
+            jump_rejected = true;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 4) Hystérésis temporelle
+    // -------------------------------------------------------------------------
+    if (frame_valid) {
+        g_target_consecutive_found_frames++;
+        g_target_consecutive_lost_frames = 0;
+    } else {
+        g_target_consecutive_lost_frames++;
+        g_target_consecutive_found_frames = 0;
+    }
+
+    if (frame_valid) {
+        if (!g_target_has_valid_pos) {
+            g_target_has_valid_pos = 1;
+            g_target_last_valid_raw_x = raw_center_x;
+            g_target_last_valid_raw_y = raw_center_y;
+            g_target_filtered_x = raw_center_x;
+            g_target_filtered_y = raw_center_y;
+        } else {
+            g_target_last_valid_raw_x = raw_center_x;
+            g_target_last_valid_raw_y = raw_center_y;
+
+            g_target_filtered_x = smooth_target_int(g_target_filtered_x, raw_center_x);
+            g_target_filtered_y = smooth_target_int(g_target_filtered_y, raw_center_y);
+        }
+
+        g_target_filtered_x = clamp_int(g_target_filtered_x, 0, width - 1);
+        g_target_filtered_y = clamp_int(g_target_filtered_y, 0, height - 1);
+
+        g_target_pos_x = g_target_filtered_x;
+        g_target_pos_y = g_target_filtered_y;
+
+        if (g_target_pos_x < center_ref) {
+            g_target_last_seen_side = -1;
+        } else if (g_target_pos_x > center_ref) {
+            g_target_last_seen_side = +1;
+        }
+
+        if (g_target_found) {
+            g_target_found = 1;
+        } else {
+            if (g_target_consecutive_found_frames >= TARGET_FOUND_FRAMES_THRESHOLD) {
+                g_target_found = 1;
+            }
+        }
+    } else {
+        if (g_target_consecutive_lost_frames >= TARGET_LOST_FRAMES_THRESHOLD) {
+            g_target_found = 0;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 5) Debug visuel
+    // -------------------------------------------------------------------------
+    if (frame_valid) {
+        frame[g_target_pos_y * width + g_target_pos_x] = COLOR_RED;
+    } else if (jump_rejected && raw_center_x >= 0 && raw_center_y >= 0) {
+        frame[raw_center_y * width + raw_center_x] = COLOR_GREEN;
+    }
+
+    // -------------------------------------------------------------------------
+    // 6) Résultat
+    // -------------------------------------------------------------------------
+    if (result) {
+        result->found = g_target_found;
+        result->center_x = g_target_pos_x;
+        result->center_y = g_target_pos_y;
+        result->used_points = blue_count;
+
+        // Non utilisés dans cette version simplifiée
+        result->std_x = 0;
+        result->std_y = 0;
+
+        if (blue_count > 0) {
+            result->bbox_left   = bbox_left;
+            result->bbox_right  = bbox_right;
+            result->bbox_top    = bbox_top;
+            result->bbox_bottom = bbox_bottom;
         }
     }
 }

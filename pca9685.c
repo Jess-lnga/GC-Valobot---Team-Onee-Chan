@@ -407,6 +407,15 @@ void move(float D, float theta_t, float theta_r){
     }
 }
 
+void turn_without_moving(int angle_us){
+    if(angle_us >= 1800){ angle_us = 1800; }
+    if(angle_us <= 1200){ angle_us = 1200; }
+
+    pca_write_pwm(COXA_FL, 0, to_ticks_us(angle_us, us_par_tick));
+    pca_write_pwm(COXA_FR, 0, to_ticks_us(angle_us, us_par_tick));
+    pca_write_pwm(COXA_BL, 0, to_ticks_us(angle_us, us_par_tick));
+    pca_write_pwm(COXA_BR, 0, to_ticks_us(angle_us, us_par_tick));
+}
 
 void get_cmd(char *buffer, size_t size) {
     size_t index = 0;
@@ -1251,15 +1260,7 @@ void demo(int mode){
 
 
 
-void turn_without_moving(int angle_us){
-    if(angle_us >= 1800){angle_us = 1800;}
-    if(angle_us <= 1200){angle_us = 1200;}
 
-    pca_write_pwm(COXA_FL, 0, to_ticks_us(angle_us, us_par_tick));
-    pca_write_pwm(COXA_FR, 0, to_ticks_us(angle_us, us_par_tick));
-    pca_write_pwm(COXA_BL, 0, to_ticks_us(angle_us, us_par_tick));
-    pca_write_pwm(COXA_BR, 0, to_ticks_us(angle_us, us_par_tick));
-}
 
 void recenter(int previous_angle_us){
     int troca_step = 10;

@@ -1,71 +1,14 @@
 #include "line_following.h"
+#include "frame_analysis.h"
+#include <stdio.h>
+#include <math.h>
 
 #define CENTER 60.0f
 
-/*
-static float error;
-static float rotation_angle_us = 1500;
-static float k_p = 0.01; 
-
-void follow_line_testing(){
-    float line_pos = get_line_pos();
-    error = line_pos - CENTER;
-
-    rotation_angle_us += k_p * error;
-
-    if(rotation_angle_us < 1200){ rotation_angle_us = 1200;}
-    if(rotation_angle_us > 1800){ rotation_angle_us = 1800;}
-
-
-    turn_without_moving((int)rotation_angle_us);
-
-    if((rotation_angle_us == 1200)||(rotation_angle_us == 1800)){
-        recenter(rotation_angle_us);
-        rotation_angle_us = 1500;
-    }
-
-    
-    
-    //printf("Line params: LINE_POS = %.2f ERROR = %.2f ROTATION US = %.2f\r\n", line_pos, error, rotation_angle_us);
-    //printf("%d\r\n", rotation_angle_us);
-}
-
-static float D = 3;
-static float angle = 0;
-
-static float K_P = 0.1;
-static float K_I = 0.01;
-
-static float error_I = 0;
-
-#define ABS_ANGLE_MAX 30
-#define ABS_ERROR_I_MAX 400
-
-
-void follow_line(){
-    float line_pos = get_line_pos();
-    error = line_pos - CENTER;
-    error_I += error;
-
-    if(error_I >   ABS_ERROR_I_MAX){error_I =  ABS_ERROR_I_MAX;}
-    if(error_I < - ABS_ERROR_I_MAX){error_I = -ABS_ERROR_I_MAX;}
-
-
-    angle = K_P * error + K_I * error_I;
-
-    if(angle >   ABS_ANGLE_MAX){ angle =   ABS_ANGLE_MAX;}
-    if(angle < - ABS_ANGLE_MAX){ angle = - ABS_ANGLE_MAX;}
-
-    printf("-----------------------------------------------------------------------------------------\n");
-    printf("Line params: LINE_POS = %.2f ERROR = %.2f ERROR_I = %.2f ROTATION ANGLE = %.2f\r\n", line_pos, error, error_I, angle);
-    //printf("-----------------------------------------------------------------------------------------\n");
-    
-
-    move(D, 0, angle*M_PI/180.0);
-}
-
-*/
 /////////////////////////////////////////////////////////////
+// ==================== SUIVI DE LIGNE =====================
+/////////////////////////////////////////////////////////////
+
 #define LINE_CENTER_PIXEL     60.0f   // pour image rotée de largeur 120
 #define FORWARD_SPEED_CMD     3.0f
 
@@ -120,8 +63,8 @@ void follow_line_step(void)
         if (g_angle_deg >  ABS_ANGLE_MAX_DEG) g_angle_deg =  ABS_ANGLE_MAX_DEG;
         if (g_angle_deg < -ABS_ANGLE_MAX_DEG) g_angle_deg = -ABS_ANGLE_MAX_DEG;
 
-        printf("[TRACK] line=%0.2f err=%0.2f I=%0.2f angle_deg=%0.2f\n",
-               line_pos, g_error, g_error_I, g_angle_deg);
+        //printf("[TRACK] line=%0.2f err=%0.2f I=%0.2f angle_deg=%0.2f\n",
+               //line_pos, g_error, g_error_I, g_angle_deg);
 
         move(FORWARD_SPEED_CMD, 0, g_angle_deg * (float)M_PI / 180.0f);
         return;
@@ -140,9 +83,84 @@ void follow_line_step(void)
 
     g_angle_deg = side * SEARCH_ANGLE_DEG;
 
-    printf("[SEARCH] last_side=%d search_angle_deg=%0.2f\n",
-           side, g_angle_deg);
+    //printf("[SEARCH] last_side=%d search_angle_deg=%0.2f\n",
+           //side, g_angle_deg);
 
     // 0 translation, rotation pure
     move(0.0f, 0, g_angle_deg * (float)M_PI / 180.0f);
+}
+
+/////////////////////////////////////////////////////////////
+// ================= ALIGNEMENT SUR CIBLE ==================
+/////////////////////////////////////////////////////////////
+
+#define TARGET_CENTER_PIXEL         60.0f
+
+// Position neutre et limites mécaniques globales
+#define TARGET_NEUTRAL_US         1500.0f
+#define TARGET_MIN_US             1000.0f
+#define TARGET_MAX_US             2000.0f
+
+// Zone utile avant recentrage du corps
+#define TARGET_SOFT_MIN_US        1200.0f
+#define TARGET_SOFT_MAX_US        1800.0f
+
+
+
+// Petite zone morte pour éviter de gigoter
+#define TARGET_DEADBAND_PX          3.0f
+
+static float g_target_error = 0.0f;
+static float g_target_rotation_us = TARGET_NEUTRAL_US;
+
+static float clamp_float(float x, float xmin, float xmax)
+{
+    if (x < xmin) return xmin;
+    if (x > xmax) return xmax;
+    return x;
+}
+
+static float absf_local(float x)
+{
+    return (x < 0.0f) ? -x : x;
+}
+
+void target_align_reset(void)
+{
+    g_target_error = 0.0f;
+    g_target_rotation_us = TARGET_NEUTRAL_US;
+}
+
+
+static int previous_angle_us = 1500;
+
+// Contrôleur proportionnel simple
+static float TARGET_K_P = 8.0f;   // us / pixel
+
+void target_align_step(void)
+{
+    const int found = is_target_found();
+
+    // Si cible perdue : on regarde droit devant et on ne fait rien d'autre
+    //if (!found) {
+    //    recenter(previous_angle_us);
+    //    //turn_without_moving((int)TARGET_NEUTRAL_US);
+    //    return;
+    //}
+
+    const float target_x = (float)get_target_pos_x();
+
+    // Erreur horizontale seulement
+    g_target_error = target_x - TARGET_CENTER_PIXEL;
+
+    // Contrôle proportionnel simple
+    previous_angle_us += TARGET_K_P * g_target_error;
+
+    if((previous_angle_us <= 1200)||(previous_angle_us > 1800)){
+        recenter(previous_angle_us);
+        previous_angle_us = 1500;
+    }else{
+        turn_without_moving(g_target_rotation_us);
+    }
+
 }
