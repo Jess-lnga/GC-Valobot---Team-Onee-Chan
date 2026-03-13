@@ -17,14 +17,14 @@ static void core1_entry(void) {
     
     float angle_r = 0;
     float angle_t = 0;
-    float D = 3;
+    float D = 2.5;
 
     sleep_ms(2000);
 
     while (true){
         //demo(mode); 
-        //move(D, angle_t*M_PI/180, angle_r*M_PI/180);
-        follow_line();
+        move(D, angle_t*M_PI/180, angle_r*M_PI/180);
+        //follow_line();
         //follow_line_testing();
     }
 }
