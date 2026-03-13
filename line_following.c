@@ -2,7 +2,7 @@
 
 #define CENTER 60.0f
 
-
+/*
 static float error;
 static float rotation_angle_us = 1500;
 static float k_p = 0.01; 
@@ -62,4 +62,87 @@ void follow_line(){
     
 
     move(D, 0, angle*M_PI/180.0);
+}
+
+*/
+/////////////////////////////////////////////////////////////
+#define LINE_CENTER_PIXEL     60.0f   // pour image rotée de largeur 120
+#define FORWARD_SPEED_CMD     3.0f
+
+// PI en mode suivi
+static float K_P = 0.1f;
+static float K_I = 0.002f;
+
+#define ABS_ERROR_I_MAX       300.0f
+#define ABS_ANGLE_MAX_DEG      25.0f
+
+// Recherche quand ligne perdue
+#define SEARCH_ANGLE_DEG        12.0f
+
+typedef enum {
+    LINE_MODE_SEARCH = 0,
+    LINE_MODE_TRACK  = 1
+} line_mode_t;
+
+static line_mode_t g_mode = LINE_MODE_SEARCH;
+
+static float g_error = 0.0f;
+static float g_error_I = 0.0f;
+static float g_angle_deg = 0.0f;
+
+void follow_line_reset(void)
+{
+    g_error = 0.0f;
+    g_error_I = 0.0f;
+    g_angle_deg = 0.0f;
+}
+
+void follow_line_step(void)
+{
+    const int found = is_line_found();
+
+    if (found) {
+
+        if (g_mode != LINE_MODE_TRACK) {
+            follow_line_reset();
+            g_mode = LINE_MODE_TRACK;
+        }
+
+        const float line_pos = (float)get_line_pos();
+        g_error = line_pos - LINE_CENTER_PIXEL;
+
+        g_error_I += g_error;
+        if (g_error_I >  ABS_ERROR_I_MAX) g_error_I =  ABS_ERROR_I_MAX;
+        if (g_error_I < -ABS_ERROR_I_MAX) g_error_I = -ABS_ERROR_I_MAX;
+
+        g_angle_deg = K_P * g_error + K_I * g_error_I;
+
+        if (g_angle_deg >  ABS_ANGLE_MAX_DEG) g_angle_deg =  ABS_ANGLE_MAX_DEG;
+        if (g_angle_deg < -ABS_ANGLE_MAX_DEG) g_angle_deg = -ABS_ANGLE_MAX_DEG;
+
+        printf("[TRACK] line=%0.2f err=%0.2f I=%0.2f angle_deg=%0.2f\n",
+               line_pos, g_error, g_error_I, g_angle_deg);
+
+        move(FORWARD_SPEED_CMD, 0, g_angle_deg * (float)M_PI / 180.0f);
+        return;
+    }
+
+    // Ligne perdue
+    if (g_mode != LINE_MODE_SEARCH) {
+        follow_line_reset();
+        g_mode = LINE_MODE_SEARCH;
+    }
+
+    int side = get_last_seen_side();
+    if (side == 0) {
+        side = +1; // choix par défaut si jamais on n'a encore rien vu
+    }
+
+    g_angle_deg = side * SEARCH_ANGLE_DEG;
+
+    printf("[SEARCH] last_side=%d search_angle_deg=%0.2f\n",
+           side, g_angle_deg);
+
+    // 0 translation, rotation pure
+    move(0.0f, 0, g_angle_deg * (float)M_PI / 180.0f);
 }

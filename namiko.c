@@ -15,7 +15,7 @@ static void core1_entry(void) {
     wake_up();
     int mode = 2;
     
-    float angle_r = 0;
+    float angle_r = 1;
     float angle_t = 0;
     float D = 2.5;
 
@@ -23,9 +23,10 @@ static void core1_entry(void) {
 
     while (true){
         //demo(mode); 
-        move(D, angle_t*M_PI/180, angle_r*M_PI/180);
+        //move(D, angle_t*M_PI/180, angle_r*M_PI/180);
         //follow_line();
         //follow_line_testing();
+        follow_line_step();
     }
 }
 
@@ -56,8 +57,12 @@ int main() {
         //line_detection_t det;
         //frame_analyze_line_rgb565(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, &det);
 
-        find_line(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, 5);
-        //ov7670_send_frame_usb(frame);
+        //find_line(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, 5);
+        
+        line_detection_t line_result;
+        analyze_line_and_update_state(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT, &line_result);
+
+        ov7670_send_frame_usb(frame);
         
         sleep_ms(1);
     }

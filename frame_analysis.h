@@ -3,45 +3,25 @@
 
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
-    int found;      // 0 = pas de ligne détectée, 1 = ok
-    int row;        // ligne (y) où la ligne a été détectée
-    int left_x;     // x du bord gauche de la ligne
-    int right_x;    // x du bord droit de la ligne
-    int center_x;   // x du centre de la ligne
+    int found;          // 1 si ligne valide pour le contrôle, 0 sinon
+    int row;            // y dans la vue rotée
+    int left_x;         // x gauche dans la vue rotée
+    int right_x;        // x droite dans la vue rotée
+    int center_x;       // centre retenu dans la vue rotée
+
+    int used_points;    // nombre de points utilisés pour la moyenne
+    int first_used_y;   // y du premier point utilisé (le plus bas)
+    int threshold;      // seuil noir calculé dynamiquement
 } line_detection_t;
 
-/**
- * Analyse une frame RGB565 et surligne la ligne noire détectée :
- *  - bord gauche en rouge
- *  - bord droit en rouge
- *  - centre en vert
- *
- * Paramètres :
- *  - frame  : pointeur sur le buffer RGB565 (width * height pixels)
- *  - width  : largeur de l'image
- *  - height : hauteur de l'image
- *  - result : (optionnel) infos sur la ligne détectée
- *
- * Remarque : si result != NULL, result->found vaut 0 si aucune ligne détectée.
- */
-void frame_analyze_line_rgb565(uint16_t *frame,
-                               int width,
-                               int height,
-                               line_detection_t *result);
+// Analyse la frame, met à jour l'état global de suivi, et optionnellement
+// dessine des points de debug dans l'image.
+void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_detection_t *result);
 
-int get_line_pos();
+// Accesseurs pour le contrôleur
+int  get_line_pos(void);         // retourne la dernière position valide
+int  is_line_found(void);        // 1 si la ligne est actuellement trouvée
+int  get_last_seen_side(void);   // -1 gauche, +1 droite, 0 inconnu
 
-//void find_line(uint16_t *frame, int width, int height);
-
-void find_line(uint16_t *frame, int width, int height, int n_points);
-
-#ifdef __cplusplus
-}
 #endif
-
-#endif // FRAME_ANALYSIS_H
