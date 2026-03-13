@@ -27,7 +27,7 @@
 #define BOTTOM_BAND_HEIGHT       15   // bande basse de l'image rotée
 
 // Robustesse temporelle
-#define MAX_POSITION_JUMP        30   // saut max accepté entre deux frames valides
+#define MAX_POSITION_JUMP        50   // saut max accepté entre deux frames valides
 #define POSITION_SMOOTH_ALPHA_NUM  3  // alpha = 3/4
 #define POSITION_SMOOTH_ALPHA_DEN  4
 
