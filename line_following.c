@@ -135,11 +135,11 @@ void target_align_reset(void)
 static int previous_angle_us = 1500;
 
 // Contrôleur proportionnel simple
-static float TARGET_K_P = 8.0f;   // us / pixel
+static float TARGET_K_P = 5.0f;   // us / pixel
 
 void target_align_step(void)
 {
-    const int found = is_target_found();
+    //const int found = is_target_found();
 
     // Si cible perdue : on regarde droit devant et on ne fait rien d'autre
     //if (!found) {
@@ -148,19 +148,20 @@ void target_align_step(void)
     //    return;
     //}
 
-    const float target_x = (float)get_target_pos_x();
+    const float target_x = (float)get_target_pos_y();
 
     // Erreur horizontale seulement
     g_target_error = target_x - TARGET_CENTER_PIXEL;
 
     // Contrôle proportionnel simple
-    previous_angle_us += TARGET_K_P * g_target_error;
+    previous_angle_us = 1500 -  TARGET_K_P * g_target_error;
 
-    if((previous_angle_us <= 1200)||(previous_angle_us > 1800)){
+    if((previous_angle_us <= 1200)||(previous_angle_us >= 1800)){
         recenter(previous_angle_us);
         previous_angle_us = 1500;
-    }else{
-        turn_without_moving(g_target_rotation_us);
     }
+    
+    turn_without_moving(previous_angle_us);
+
 
 }

@@ -545,29 +545,39 @@ void analyze_line_and_update_state(uint16_t *frame, int width, int height, line_
 #define TARGET_LOST_FRAMES_THRESHOLD   3
 #define TARGET_FOUND_FRAMES_THRESHOLD  2
 
-// État global de suivi de cible (complètement indépendant du suivi de ligne)
-static int g_target_found = 0;
-static int g_target_pos_x = 0;
-static int g_target_pos_y = 0;
-static int g_target_last_seen_side = 0; // -1 gauche, +1 droite, 0 inconnu
+// -----------------------------------------------------------------------------
+// État global partagé cible
+// -----------------------------------------------------------------------------
+// volatile : utile ici car accès depuis 2 cores
+static volatile int g_target_found = 0;
+static volatile int g_target_pos   = 60;   // position utile partagée avec le contrôleur
+static volatile int g_target_last_seen_side = 0; // -1, +1, 0
 
+// État interne de robustesse temporelle
 static int g_target_has_valid_pos = 0;
-static int g_target_last_valid_raw_x = 0;
-static int g_target_last_valid_raw_y = 0;
-static int g_target_filtered_x = 0;
-static int g_target_filtered_y = 0;
+static int g_target_last_valid_raw_pos = 60;
+static int g_target_filtered_pos = 60;
 
 static int g_target_consecutive_lost_frames = 0;
 static int g_target_consecutive_found_frames = 0;
 
+// -----------------------------------------------------------------------------
+// Getters
+// -----------------------------------------------------------------------------
+int get_target_pos(void)
+{
+    return g_target_pos;
+}
+
+// Compatibilité avec ancien code si besoin
 int get_target_pos_x(void)
 {
-    return g_target_pos_x;
+    return -1;
 }
 
 int get_target_pos_y(void)
 {
-    return g_target_pos_y;
+    return g_target_pos;
 }
 
 int is_target_found(void)
@@ -580,6 +590,9 @@ int get_target_last_seen_side(void)
     return g_target_last_seen_side;
 }
 
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
 static int smooth_target_int(int old_value, int new_value)
 {
     int num = TARGET_SMOOTH_ALPHA_NUM;
@@ -587,7 +600,6 @@ static int smooth_target_int(int old_value, int new_value)
     return (num * new_value + (den - num) * old_value + den / 2) / den;
 }
 
-// Filtre bleu simple et peu coûteux
 static inline bool is_blue_target_pixel(uint16_t px)
 {
     uint8_t r5, g6, b5;
@@ -607,14 +619,15 @@ static inline bool is_blue_target_pixel(uint16_t px)
 
     if (b5 < TARGET_BLUE_MIN_B5) return false;
     if (chroma < TARGET_BLUE_MIN_CHROMA) return false;
-
-    // Le bleu doit dominer rouge et vert
     if (b5 < (int)r5 + TARGET_BLUE_MARGIN_R) return false;
     if (b5 < g5 + TARGET_BLUE_MARGIN_G) return false;
 
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// Analyse cible
+// -----------------------------------------------------------------------------
 void find_target_and_update_state(uint16_t *frame, int width, int height, target_detection_t *result)
 {
     if (result) {
@@ -641,14 +654,14 @@ void find_target_and_update_state(uint16_t *frame, int width, int height, target
         return;
     }
 
-    const int center_ref = width / 2;
+    const int center_ref = height / 2;
 
     // -------------------------------------------------------------------------
-    // 1) Une seule passe sous-échantillonnée : moyenne des pixels bleus
+    // Une seule passe : moyenne de la coordonnée utile
+    // Ici on prend Y comme coordonnée de contrôle, car c'est celle que tu utilises
     // -------------------------------------------------------------------------
     int blue_count = 0;
-    long sum_x = 0;
-    long sum_y = 0;
+    long sum_pos = 0;
 
     int bbox_left = width;
     int bbox_right = -1;
@@ -666,8 +679,7 @@ void find_target_and_update_state(uint16_t *frame, int width, int height, target
             }
 
             blue_count++;
-            sum_x += x;
-            sum_y += y;
+            sum_pos += y;   // <-- coordonnée utile transmise au contrôleur
 
             if (x < bbox_left)   bbox_left = x;
             if (x > bbox_right)  bbox_right = x;
@@ -681,39 +693,34 @@ void find_target_and_update_state(uint16_t *frame, int width, int height, target
     }
 
     // -------------------------------------------------------------------------
-    // 2) Validation simple
+    // Validation simple
     // -------------------------------------------------------------------------
     bool frame_valid = true;
-    int raw_center_x = -1;
-    int raw_center_y = -1;
+    int raw_pos = -1;
 
     if (blue_count < TARGET_MIN_BLUE_POINTS) {
         frame_valid = false;
     } else {
-        raw_center_x = (int)((sum_x + blue_count / 2) / blue_count);
-        raw_center_y = (int)((sum_y + blue_count / 2) / blue_count);
-
-        raw_center_x = clamp_int(raw_center_x, 0, width - 1);
-        raw_center_y = clamp_int(raw_center_y, 0, height - 1);
+        raw_pos = (int)((sum_pos + blue_count / 2) / blue_count);
+        raw_pos = clamp_int(raw_pos, 0, height - 1);
     }
 
     // -------------------------------------------------------------------------
-    // 3) Rejet des sauts aberrants inter-frame
+    // Rejet des sauts aberrants inter-frame
     // -------------------------------------------------------------------------
     bool jump_rejected = false;
 
     if (frame_valid && g_target_has_valid_pos) {
-        int dx = iabs_int(raw_center_x - g_target_last_valid_raw_x);
-        int dy = iabs_int(raw_center_y - g_target_last_valid_raw_y);
+        int dpos = iabs_int(raw_pos - g_target_last_valid_raw_pos);
 
-        if (dx > TARGET_MAX_POSITION_JUMP || dy > TARGET_MAX_POSITION_JUMP) {
+        if (dpos > TARGET_MAX_POSITION_JUMP) {
             frame_valid = false;
             jump_rejected = true;
         }
     }
 
     // -------------------------------------------------------------------------
-    // 4) Hystérésis temporelle
+    // Hystérésis temporelle
     // -------------------------------------------------------------------------
     if (frame_valid) {
         g_target_consecutive_found_frames++;
@@ -726,36 +733,26 @@ void find_target_and_update_state(uint16_t *frame, int width, int height, target
     if (frame_valid) {
         if (!g_target_has_valid_pos) {
             g_target_has_valid_pos = 1;
-            g_target_last_valid_raw_x = raw_center_x;
-            g_target_last_valid_raw_y = raw_center_y;
-            g_target_filtered_x = raw_center_x;
-            g_target_filtered_y = raw_center_y;
+            g_target_last_valid_raw_pos = raw_pos;
+            g_target_filtered_pos = raw_pos;
         } else {
-            g_target_last_valid_raw_x = raw_center_x;
-            g_target_last_valid_raw_y = raw_center_y;
-
-            g_target_filtered_x = smooth_target_int(g_target_filtered_x, raw_center_x);
-            g_target_filtered_y = smooth_target_int(g_target_filtered_y, raw_center_y);
+            g_target_last_valid_raw_pos = raw_pos;
+            g_target_filtered_pos = smooth_target_int(g_target_filtered_pos, raw_pos);
         }
 
-        g_target_filtered_x = clamp_int(g_target_filtered_x, 0, width - 1);
-        g_target_filtered_y = clamp_int(g_target_filtered_y, 0, height - 1);
+        g_target_filtered_pos = clamp_int(g_target_filtered_pos, 0, height - 1);
+        g_target_pos = g_target_filtered_pos;
 
-        g_target_pos_x = g_target_filtered_x;
-        g_target_pos_y = g_target_filtered_y;
-
-        if (g_target_pos_x < center_ref) {
+        if (g_target_pos < center_ref) {
             g_target_last_seen_side = -1;
-        } else if (g_target_pos_x > center_ref) {
+        } else if (g_target_pos > center_ref) {
             g_target_last_seen_side = +1;
         }
 
         if (g_target_found) {
             g_target_found = 1;
-        } else {
-            if (g_target_consecutive_found_frames >= TARGET_FOUND_FRAMES_THRESHOLD) {
-                g_target_found = 1;
-            }
+        } else if (g_target_consecutive_found_frames >= TARGET_FOUND_FRAMES_THRESHOLD) {
+            g_target_found = 1;
         }
     } else {
         if (g_target_consecutive_lost_frames >= TARGET_LOST_FRAMES_THRESHOLD) {
@@ -764,24 +761,24 @@ void find_target_and_update_state(uint16_t *frame, int width, int height, target
     }
 
     // -------------------------------------------------------------------------
-    // 5) Debug visuel
+    // Debug visuel
     // -------------------------------------------------------------------------
     if (frame_valid) {
-        frame[g_target_pos_y * width + g_target_pos_x] = COLOR_RED;
-    } else if (jump_rejected && raw_center_x >= 0 && raw_center_y >= 0) {
-        frame[raw_center_y * width + raw_center_x] = COLOR_GREEN;
+        int debug_x = width / 2;
+        frame[g_target_pos * width + debug_x] = COLOR_RED;
+    } else if (jump_rejected && raw_pos >= 0) {
+        int debug_x = width / 2;
+        frame[raw_pos * width + debug_x] = COLOR_GREEN;
     }
 
     // -------------------------------------------------------------------------
-    // 6) Résultat
+    // Résultat
     // -------------------------------------------------------------------------
     if (result) {
         result->found = g_target_found;
-        result->center_x = g_target_pos_x;
-        result->center_y = g_target_pos_y;
+        result->center_x = -1;
+        result->center_y = g_target_pos;
         result->used_points = blue_count;
-
-        // Non utilisés dans cette version simplifiée
         result->std_x = 0;
         result->std_y = 0;
 
