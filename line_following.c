@@ -137,6 +137,7 @@ static int previous_angle_us = 1500;
 // Contrôleur proportionnel simple
 static float TARGET_K_P = 5.0f;   // us / pixel
 
+
 void target_align_step(void)
 {
     //const int found = is_target_found();
