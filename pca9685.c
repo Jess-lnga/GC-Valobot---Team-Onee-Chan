@@ -244,8 +244,8 @@ void move(float D, float theta_t, float theta_r){
     
     
     //------- Mouvement parameters -------//
-    int air_step   = 25;
-    int floor_step = 16;   // Good values: air --> 22; floor --> 18
+    int air_step   = 22;   // Good values: air --> 25; floor --> 15
+    int floor_step = 18;   // Good values: air --> 22; floor --> 18
 
     int step = air_step;
 

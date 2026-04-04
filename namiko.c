@@ -15,7 +15,7 @@ static void core1_entry(void) {
     wake_up();
     int mode = 2;
     
-    float angle_r = 0;
+    float angle_r = 2;
     float angle_t = 0;
     float D = 2.5;
 
