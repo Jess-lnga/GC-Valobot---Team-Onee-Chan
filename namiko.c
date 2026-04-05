@@ -14,6 +14,7 @@ static void core1_entry(void) {
 
     wake_up();
     int mode = 2;
+    int increment = 0;
     
     float angle_r = 2;
     float angle_t = 0;
@@ -23,11 +24,22 @@ static void core1_entry(void) {
 
     while (true){
         //demo(mode); 
-        move(D, angle_t*M_PI/180, angle_r*M_PI/180);
+        //move(D, angle_t*M_PI/180, angle_r*M_PI/180);
+        if(increment <= 5){
+            move(D, angle_t*M_PI/180, angle_r*M_PI/180);
+        }else{
+            move_2(D, angle_t*M_PI/180, angle_r*M_PI/180);
+        }
+        
         //follow_line();
         //follow_line_testing();
         //follow_line_step();
         //target_align_step();
+
+        ++increment;
+        if(increment > 10){
+            increment = 0;
+        }
     }
 }
 
