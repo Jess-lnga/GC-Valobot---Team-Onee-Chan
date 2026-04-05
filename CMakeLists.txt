@@ -30,6 +30,7 @@ add_executable(onee_chan
     ov7670.c
     ov7670_pio_dma.c
     frame_analysis.c
+    frame_analysis_helpers.c
     line_following.c
 )
 
