@@ -9,6 +9,8 @@
 #define COLOR_GREEN  0x07E0
 #define COLOR_BLUE   0x001F
 #define COLOR_PURPLE 0xF81F
+#define COLOR_ORANGE 0xFD20
+#define COLOR_RED    0xF800
 
 typedef struct {
     bool found;
@@ -19,5 +21,6 @@ typedef struct {
 void filter_black_pxl(uint16_t *frame, int width, int height);
 void find_black_segments(uint16_t *frame, int width, int height);
 line_control_point_t sort_line(uint16_t *frame, int width, int height);
+void draw_control_point(uint16_t *frame, int width, int height, int center_x, int center_y, uint16_t color);
 
 #endif

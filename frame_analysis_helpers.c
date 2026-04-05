@@ -216,21 +216,21 @@ void find_black_segments(uint16_t *frame, int width, int height)
     }
 }
 
-static void draw_control_point(uint16_t *frame, int width, int height, int center_x, int center_y)
+void draw_control_point(uint16_t *frame, int width, int height, int center_x, int center_y, uint16_t color)
 {
-    set_px_rotm90(frame, width, height, center_x, center_y, COLOR_PURPLE);
+    set_px_rotm90(frame, width, height, center_x, center_y, color);
 
     if (center_x > 0) {
-        set_px_rotm90(frame, width, height, center_x - 1, center_y, COLOR_PURPLE);
+        set_px_rotm90(frame, width, height, center_x - 1, center_y, color);
     }
     if (center_x + 1 < height) {
-        set_px_rotm90(frame, width, height, center_x + 1, center_y, COLOR_PURPLE);
+        set_px_rotm90(frame, width, height, center_x + 1, center_y, color);
     }
     if (center_y > 0) {
-        set_px_rotm90(frame, width, height, center_x, center_y - 1, COLOR_PURPLE);
+        set_px_rotm90(frame, width, height, center_x, center_y - 1, color);
     }
     if (center_y + 1 < width) {
-        set_px_rotm90(frame, width, height, center_x, center_y + 1, COLOR_PURPLE);
+        set_px_rotm90(frame, width, height, center_x, center_y + 1, color);
     }
 }
 
@@ -263,8 +263,6 @@ line_control_point_t sort_line(uint16_t *frame, int width, int height)
     output.found = true;
     output.center_x = (int)((sum_x + center_count / 2) / center_count);
     output.center_y = (int)((sum_y + center_count / 2) / center_count);
-
-    draw_control_point(frame, width, height, output.center_x, output.center_y);
 
     return output;
 }
