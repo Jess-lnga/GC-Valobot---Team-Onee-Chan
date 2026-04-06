@@ -11,6 +11,15 @@
 #define MIN_BLACK_SEGMENT_WIDTH        6
 #define MAX_WHITE_GAP_IN_SEGMENT       3
 #define CONTROL_BAND_HEIGHT           24
+#define MAX_SEGMENTS_PER_ROW           8
+#define MAX_ROW_CENTER_JUMP          24
+
+typedef struct {
+    int start_x;
+    int end_x;
+    int center_x;
+    int width;
+} black_segment_t;
 
 static inline int rotm90_xo(int xv, int yv)
 {
@@ -163,15 +172,77 @@ static void mark_segment(uint16_t *frame,
     set_px_rotm90(frame, width, height, center_x, row, COLOR_GREEN);
 }
 
+static int iabs_int(int x)
+{
+    return (x < 0) ? -x : x;
+}
+
+static void register_segment_candidate(black_segment_t *segments,
+                                       int *segment_count,
+                                       int start_x,
+                                       int end_x)
+{
+    if (*segment_count >= MAX_SEGMENTS_PER_ROW) {
+        return;
+    }
+
+    segments[*segment_count].start_x = start_x;
+    segments[*segment_count].end_x = end_x;
+    segments[*segment_count].center_x = (start_x + end_x) / 2;
+    segments[*segment_count].width = end_x - start_x + 1;
+    (*segment_count)++;
+}
+
+static int choose_segment_index(const black_segment_t *segments,
+                                int segment_count,
+                                int reference_center_x,
+                                int has_reference)
+{
+    int best_idx = -1;
+    int best_score = 0x7FFFFFFF;
+
+    for (int i = 0; i < segment_count; ++i) {
+        const int dx = iabs_int(segments[i].center_x - reference_center_x);
+
+        if (has_reference && dx > MAX_ROW_CENTER_JUMP) {
+            continue;
+        }
+
+        if (dx < best_score) {
+            best_score = dx;
+            best_idx = i;
+        }
+    }
+
+    if (best_idx >= 0) {
+        return best_idx;
+    }
+
+    for (int i = 0; i < segment_count; ++i) {
+        const int dx = iabs_int(segments[i].center_x - reference_center_x);
+        if (dx < best_score) {
+            best_score = dx;
+            best_idx = i;
+        }
+    }
+
+    return best_idx;
+}
+
 void find_black_segments(uint16_t *frame, int width, int height)
 {
     const int rotated_width = height;
     const int rotated_height = width;
+    const int image_center_x = rotated_width / 2;
+    int previous_center_x = image_center_x;
+    int has_previous_center = 0;
 
     for (int row = 0; row < rotated_height; ++row) {
         int segment_start = -1;
         int last_black_x = -1;
         int white_gap = 0;
+        black_segment_t segments[MAX_SEGMENTS_PER_ROW];
+        int segment_count = 0;
 
         for (int col = 0; col < rotated_width; ++col) {
             const bool is_black = (get_px_rotm90(frame, width, height, col, row) == COLOR_BLACK);
@@ -198,7 +269,7 @@ void find_black_segments(uint16_t *frame, int width, int height)
             if (last_black_x >= segment_start) {
                 const int segment_width = last_black_x - segment_start + 1;
                 if (segment_width >= MIN_BLACK_SEGMENT_WIDTH) {
-                    mark_segment(frame, width, height, row, segment_start, last_black_x);
+                    register_segment_candidate(segments, &segment_count, segment_start, last_black_x);
                 }
             }
 
@@ -210,7 +281,24 @@ void find_black_segments(uint16_t *frame, int width, int height)
         if (segment_start >= 0 && last_black_x >= segment_start) {
             const int segment_width = last_black_x - segment_start + 1;
             if (segment_width >= MIN_BLACK_SEGMENT_WIDTH) {
-                mark_segment(frame, width, height, row, segment_start, last_black_x);
+                register_segment_candidate(segments, &segment_count, segment_start, last_black_x);
+            }
+        }
+
+        if (segment_count > 0) {
+            const int chosen_idx = choose_segment_index(segments,
+                                                        segment_count,
+                                                        has_previous_center ? previous_center_x : image_center_x,
+                                                        has_previous_center);
+            if (chosen_idx >= 0) {
+                mark_segment(frame,
+                             width,
+                             height,
+                             row,
+                             segments[chosen_idx].start_x,
+                             segments[chosen_idx].end_x);
+                previous_center_x = segments[chosen_idx].center_x;
+                has_previous_center = 1;
             }
         }
     }
