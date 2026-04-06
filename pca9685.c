@@ -413,6 +413,7 @@ void move_2(float D, float theta_t, float theta_r){
 }
 
 void move(float D, float theta_t, float theta_r){
+    // Theta_t and Theta_r are in radians, D is in cm
     int ticks_min = 1000;
     int ticks_max = 3000 - ticks_min;
     int ticks_middle = 1500;

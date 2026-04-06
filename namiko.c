@@ -16,6 +16,10 @@ static void core1_entry(void) {
 
     wake_up();
     sleep_ms(2000);
+
+    while(true){
+        follow_line_step();
+    }
 }
 
 static void init_all(void) {
