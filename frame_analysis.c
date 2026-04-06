@@ -47,7 +47,7 @@ static int smooth_int(int old_value, int new_value)
           + LINE_SMOOTH_ALPHA_DEN / 2) / LINE_SMOOTH_ALPHA_DEN;
 }
 
-static void publish_line_position(int pos_x, int image_center_x)
+static void update_line_position_uncertain(int pos_x, int image_center_x)
 {
     if (!g_has_valid_history) {
         g_has_valid_history = 1;
@@ -56,16 +56,21 @@ static void publish_line_position(int pos_x, int image_center_x)
         g_filtered_pos = smooth_int(g_filtered_pos, pos_x);
     }
 
-    g_last_valid_pos = pos_x;
     g_line_pos = g_filtered_pos;
-    g_line_measurement_valid = 1;
-    g_line_lost_frames = 0;
 
     if (g_line_pos < image_center_x) {
         g_last_seen_side = -1;
     } else if (g_line_pos > image_center_x) {
         g_last_seen_side = 1;
     }
+}
+
+static void publish_line_position(int pos_x, int image_center_x)
+{
+    update_line_position_uncertain(pos_x, image_center_x);
+    g_last_valid_pos = pos_x;
+    g_line_measurement_valid = 1;
+    g_line_lost_frames = 0;
 }
 
 static control_point_confidence_t take_decision(line_control_point_t control_point, int width, int height)
@@ -107,6 +112,7 @@ static control_point_confidence_t take_decision(line_control_point_t control_poi
     if (uncertain_candidate) {
         g_consecutive_uncertain_frames++;
         g_line_state = LINE_STATE_UNCERTAIN;
+        update_line_position_uncertain(candidate_pos, image_center_x);
 
         if (g_consecutive_uncertain_frames > LINE_UNCERTAIN_MAX_FRAMES) {
             g_line_found = 0;
@@ -145,11 +151,11 @@ static void draw_decided_control_point(uint16_t *frame,
     }
 
     if (confidence == CONTROL_POINT_UNCERTAIN) {
-        draw_control_point(frame, width, height, control_point.center_x, control_point.center_y, COLOR_ORANGE);
+        draw_control_point(frame, width, height, g_line_pos, control_point.center_y, COLOR_ORANGE);
         return;
     }
 
-    draw_control_point(frame, width, height, control_point.center_x, control_point.center_y, COLOR_RED);
+    draw_control_point(frame, width, height, g_line_pos, control_point.center_y, COLOR_RED);
 }
 
 uint16_t *find_line_pos(uint16_t *frame, int width, int height)
@@ -165,6 +171,7 @@ uint16_t *find_line_pos(uint16_t *frame, int width, int height)
     find_black_segments(frame, width, height);
 
     line_control_point_t control_point = sort_line(frame, width, height);
+
     control_point_confidence_t confidence = take_decision(control_point, width, height);
     draw_decided_control_point(frame, width, height, control_point, confidence);
     
