@@ -3,16 +3,14 @@
 #include "frame_analysis_helpers.h"
 
 #define LINE_EDGE_MARGIN                 10
-#define LINE_MAX_POSITION_JUMP           20
-#define LINE_FOUND_CONFIRM_FRAMES         2
+#define LINE_MAX_POSITION_JUMP           40
 #define LINE_LOST_CONFIRM_FRAMES          3
-#define LINE_UNCERTAIN_MAX_FRAMES         2
 #define LINE_SMOOTH_ALPHA_NUM             3
 #define LINE_SMOOTH_ALPHA_DEN             4
+#define LINE_REACQUIRE_CONFIRM_FRAMES     2
 
 typedef enum {
     LINE_STATE_LOST = 0,
-    LINE_STATE_UNCERTAIN,
     LINE_STATE_FOUND
 } line_state_t;
 
@@ -32,8 +30,9 @@ static line_state_t g_line_state = LINE_STATE_LOST;
 static int g_has_valid_history = 0;
 static int g_last_valid_pos = 60;
 static int g_filtered_pos = 60;
-static int g_consecutive_found_frames = 0;
-static int g_consecutive_uncertain_frames = 0;
+static int g_last_raw_pos = 60;
+static int g_has_raw_history = 0;
+static int g_consecutive_reacquire_frames = 0;
 
 static int iabs_int(int x)
 {
@@ -73,66 +72,73 @@ static void publish_line_position(int pos_x, int image_center_x)
     g_line_lost_frames = 0;
 }
 
-static control_point_confidence_t take_decision(line_control_point_t control_point, int width, int height)
+static control_point_confidence_t take_decision_2(line_control_point_t control_point, int width, int height)
 {
     const int image_center_x = height / 2;
-    const int candidate_pos = control_point.center_x;
-    const int near_border = control_point.found &&
-                            ((candidate_pos <= LINE_EDGE_MARGIN) ||
-                             (candidate_pos >= (height - 1 - LINE_EDGE_MARGIN)));
-    const int jump_too_large = control_point.found &&
-                               g_has_valid_history &&
-                               (iabs_int(candidate_pos - g_last_valid_pos) > LINE_MAX_POSITION_JUMP);
-    const int valid_candidate = control_point.found && !near_border && !jump_too_large;
-    const int uncertain_candidate = control_point.found && !valid_candidate;
     (void)width;
 
-    if (valid_candidate) {
-        g_consecutive_found_frames++;
-        g_consecutive_uncertain_frames = 0;
+    if (!control_point.found) {
+        g_line_measurement_valid = 0;
+        g_consecutive_reacquire_frames = 0;
+        g_line_lost_frames++;
 
-        publish_line_position(candidate_pos, image_center_x);
-
-        if (g_consecutive_found_frames >= LINE_FOUND_CONFIRM_FRAMES) {
-            g_line_state = LINE_STATE_FOUND;
-            g_line_found = 1;
-            return CONTROL_POINT_CERTAIN;
-        } else if (g_line_state == LINE_STATE_LOST) {
-            g_line_state = LINE_STATE_UNCERTAIN;
+        if (g_line_lost_frames >= LINE_LOST_CONFIRM_FRAMES) {
+            g_line_state = LINE_STATE_LOST;
             g_line_found = 0;
+        }
+
+        return CONTROL_POINT_UNRELIABLE;
+    }
+
+    {
+        const int candidate_pos = control_point.center_x;
+        const int in_safe_zone = (candidate_pos > LINE_EDGE_MARGIN) &&
+                                 (candidate_pos < (height - 1 - LINE_EDGE_MARGIN));
+        const int abrupt_jump = g_has_raw_history &&
+                                (iabs_int(candidate_pos - g_last_raw_pos) > LINE_MAX_POSITION_JUMP);
+
+        g_last_raw_pos = candidate_pos;
+        g_has_raw_history = 1;
+
+        if (g_line_state == LINE_STATE_LOST) {
+            if (in_safe_zone) {
+                g_consecutive_reacquire_frames++;
+            } else {
+                g_consecutive_reacquire_frames = 0;
+            }
+
+            if (g_consecutive_reacquire_frames >= LINE_REACQUIRE_CONFIRM_FRAMES) {
+                publish_line_position(candidate_pos, image_center_x);
+                g_line_state = LINE_STATE_FOUND;
+                g_line_found = 1;
+                return CONTROL_POINT_CERTAIN;
+            }
+
+            g_line_measurement_valid = 0;
+            g_line_lost_frames++;
             return CONTROL_POINT_UNCERTAIN;
         }
 
-        return CONTROL_POINT_UNCERTAIN;
-    }
+        g_consecutive_reacquire_frames = 0;
 
-    g_line_measurement_valid = 0;
-    g_consecutive_found_frames = 0;
-
-    if (uncertain_candidate) {
-        g_consecutive_uncertain_frames++;
-        g_line_state = LINE_STATE_UNCERTAIN;
-        update_line_position_uncertain(candidate_pos, image_center_x);
-
-        if (g_consecutive_uncertain_frames > LINE_UNCERTAIN_MAX_FRAMES) {
-            g_line_found = 0;
+        if (abrupt_jump) {
+            g_line_measurement_valid = 0;
             g_line_lost_frames++;
+
+            if (g_line_lost_frames >= LINE_LOST_CONFIRM_FRAMES) {
+                g_line_state = LINE_STATE_LOST;
+                g_line_found = 0;
+                return CONTROL_POINT_UNRELIABLE;
+            }
+
+            return CONTROL_POINT_UNCERTAIN;
         }
 
-        return CONTROL_POINT_UNCERTAIN;
+        publish_line_position(candidate_pos, image_center_x);
+        g_line_state = LINE_STATE_FOUND;
+        g_line_found = 1;
+        return CONTROL_POINT_CERTAIN;
     }
-
-    g_consecutive_uncertain_frames = 0;
-    g_line_lost_frames++;
-
-    if (g_line_lost_frames >= LINE_LOST_CONFIRM_FRAMES) {
-        g_line_state = LINE_STATE_LOST;
-        g_line_found = 0;
-    } else if (g_line_state == LINE_STATE_FOUND) {
-        g_line_state = LINE_STATE_UNCERTAIN;
-    }
-
-    return CONTROL_POINT_UNRELIABLE;
 }
 
 static void draw_decided_control_point(uint16_t *frame,
@@ -172,7 +178,7 @@ uint16_t *find_line_pos(uint16_t *frame, int width, int height)
 
     line_control_point_t control_point = sort_line(frame, width, height);
 
-    control_point_confidence_t confidence = take_decision(control_point, width, height);
+    control_point_confidence_t confidence = take_decision_2(control_point, width, height);
     draw_decided_control_point(frame, width, height, control_point, confidence);
     
     return frame;
