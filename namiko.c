@@ -19,6 +19,7 @@ static void core1_entry(void) {
 
     while(true){
         follow_line_step();
+        //move(0, 0, 0.22);
     }
 }
 
@@ -44,7 +45,7 @@ int main() {
     while (true) {
         ov7670_capture_frame(frame);
         find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-        ov7670_send_frame_usb(frame);
+        //ov7670_send_frame_usb(frame);
     
         
         sleep_ms(1);

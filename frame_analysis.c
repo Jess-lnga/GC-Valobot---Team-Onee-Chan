@@ -2,9 +2,9 @@
 
 #include "frame_analysis_helpers.h"
 
-#define LINE_EDGE_MARGIN                 10
+#define LINE_EDGE_MARGIN                 20
 #define LINE_MAX_POSITION_JUMP           40
-#define LINE_LOST_CONFIRM_FRAMES          3
+#define LINE_LOST_CONFIRM_FRAMES          1
 #define LINE_SMOOTH_ALPHA_NUM             3
 #define LINE_SMOOTH_ALPHA_DEN             4
 #define LINE_REACQUIRE_CONFIRM_FRAMES     2
