@@ -26,7 +26,7 @@ typedef enum {
 } line_following_mode_t;
 
 static line_following_mode_t g_mode = LINE_MODE_SEARCH;
-static bool debug = true;
+static bool debug = false;
 
 static float g_line_error = 0.0f;
 static float g_line_error_i = 0.0f;

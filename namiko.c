@@ -17,9 +17,26 @@ static void core1_entry(void) {
     wake_up();
     sleep_ms(2000);
 
+    int angle_deg = 0;
+    int increment = 0;
+
     while(true){
         follow_line_step();
-        //move(0, 0, 0.22);
+
+        /*
+
+        if(increment < 5){
+            move(2.5, 0, 8.0f * 3.14159265f / 180.0f);
+            ++increment;
+
+        }else{
+            move(2.5, 0, -8.0f * 3.14159265f / 180.0f);
+            ++increment;
+            if(increment >= 10){
+                increment = 0;
+            }
+        }
+        */
     }
 }
 
@@ -45,7 +62,7 @@ int main() {
     while (true) {
         ov7670_capture_frame(frame);
         find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-        //ov7670_send_frame_usb(frame);
+        ov7670_send_frame_usb(frame);
     
         
         sleep_ms(1);
