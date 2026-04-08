@@ -14,7 +14,7 @@
 #define SEARCH_THETA_T              0.0f
 #define SEARCH_THETA_R_RAD          0.22f
 
-#define LINE_KP                     0.003f
+#define LINE_KP                     0.005f
 #define LINE_KI                     0.00014f
 
 #define LINE_ERROR_I_MAX          250.0f
@@ -51,7 +51,8 @@ static void follow_line_track_step(void)
     g_theta_r_cmd = LINE_KP * g_line_error + LINE_KI * g_line_error_i;
     g_theta_r_cmd = clamp_float(g_theta_r_cmd, -LINE_THETA_R_MAX_RAD, LINE_THETA_R_MAX_RAD);
 
-    move(TRACK_D, TRACK_THETA_T, g_theta_r_cmd);
+    //move(TRACK_D, TRACK_THETA_T, g_theta_r_cmd);
+    move_step(TRACK_D, TRACK_THETA_T, g_theta_r_cmd);
 
     if (debug) {
         printf("state=%s line_pos=%.2f err=%.2f err_i=%.2f theta_r_deg=%.2f\n",
@@ -71,7 +72,8 @@ static void follow_line_search_step(void)
     }
 
     g_theta_r_cmd = (float)side * SEARCH_THETA_R_RAD;
-    move(SEARCH_D, SEARCH_THETA_T, g_theta_r_cmd);
+    //move(SEARCH_D, SEARCH_THETA_T, g_theta_r_cmd);
+    move_step(SEARCH_D, SEARCH_THETA_T, g_theta_r_cmd);
 }
 
 void follow_line_reset(void)
