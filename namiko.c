@@ -39,7 +39,12 @@ static void core1_entry(void) {
         int d2 = get_dist_2();
         int d3 = get_dist_3();
 
-        printf("TOF distances: d1=%d mm | d2=%d mm | d3=%d mm\n", d1, d2, d3);
+        //printf("\033[H\033[J");
+        //printf("TOF distances: d1=%d mm | d2=%d mm | d3=%d mm\n", d1, d2, d3);
+        printf("\033[1GTOF distances: d1=%d mm | d2=%d mm | d3=%d mm    ", d1, d2, d3);
+        fflush(stdout);
+
+
 
 
         sleep_ms(100);
