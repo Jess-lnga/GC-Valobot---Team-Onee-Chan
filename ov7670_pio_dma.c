@@ -1,3 +1,8 @@
+// Code for team Onee~Chan - GC Valobot - Robopoly 2025 - 2026
+// Author: Jérôme ESSOLA ELANGA - jerome.essolaelanga@epfl.ch
+// Team members: Jérôme ESSOLA ELANGA
+
+
 #include "ov7670_pio_dma.h"
 
 #include "pico/stdlib.h"
