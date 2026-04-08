@@ -32,6 +32,7 @@ add_executable(onee_chan
     frame_analysis.c
     frame_analysis_helpers.c
     line_following.c
+    tof.c
 )
 
 # Génère ov7670.pio.h à partir de ov7670.pio
