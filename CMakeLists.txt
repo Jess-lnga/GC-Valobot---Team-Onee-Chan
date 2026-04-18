@@ -46,6 +46,7 @@ target_link_libraries(onee_chan
     hardware_pwm
     hardware_pio
     hardware_dma
+    hardware_uart
 )
 
 if (PICO_CYW43_SUPPORTED)

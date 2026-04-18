@@ -87,3 +87,256 @@ int main() {
 }
 
 */
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "pico/stdlib.h"
+#include "hardware/adc.h"
+
+#define LED_PIN 2
+#define BUZZER_PIN 4
+
+#define ADC_GPIO_0 26
+#define ADC_GPIO_1 27
+#define ADC_GPIO_2 28
+#define ADC_GPIO_3 29
+
+#define ADC_CHANNEL_0 0
+#define ADC_CHANNEL_1 1
+#define ADC_CHANNEL_2 2
+#define ADC_CHANNEL_3 3
+#define ADC_INPUT_COUNT 4
+
+#define ADC_MAX_READING 4095.0f
+#define ADC_REF_VOLTAGE_MV 3300.0f
+#define ADC_SETTLE_TIME_US 50
+#define ADC_INTER_SAMPLE_TIME_US 10
+#define SAMPLE_PERIOD_MS 50
+#define MOVING_AVERAGE_SIZE 16
+#define HISTORY_WINDOW_MS 1000
+#define HISTORY_SIZE (HISTORY_WINDOW_MS / SAMPLE_PERIOD_MS)
+#define DROP_THRESHOLD_MV 10.0f
+
+#define BUZZER_ACTIVE_LEVEL 1
+#define BEEP_DURATION_MS 100
+#define BEEP_PAUSE_MS 50
+#define ALERT_REARM_MS 2000
+
+typedef struct {
+    uint16_t samples[MOVING_AVERAGE_SIZE];
+    uint32_t sum;
+    uint8_t index;
+    uint8_t count;
+} moving_average_t;
+
+typedef struct {
+    float samples[HISTORY_SIZE];
+    uint8_t index;
+    uint8_t count;
+} voltage_history_t;
+
+typedef struct {
+    bool active;
+    bool buzzer_on;
+    uint8_t transitions_remaining;
+    absolute_time_t next_transition;
+    absolute_time_t rearm_time;
+} buzzer_pattern_t;
+
+static const uint adc_channels[ADC_INPUT_COUNT] = {
+    ADC_CHANNEL_0,
+    ADC_CHANNEL_1,
+    ADC_CHANNEL_2,
+    ADC_CHANNEL_3,
+};
+
+static void buzzer_set(bool enabled) {
+    gpio_put(BUZZER_PIN, enabled ? BUZZER_ACTIVE_LEVEL : !BUZZER_ACTIVE_LEVEL);
+}
+
+static void init_outputs(void) {
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
+    gpio_put(LED_PIN, 1);
+
+    gpio_init(BUZZER_PIN);
+    gpio_set_dir(BUZZER_PIN, GPIO_OUT);
+    buzzer_set(false);
+}
+
+static void init_adc_inputs(void) {
+    adc_init();
+    adc_gpio_init(ADC_GPIO_0);
+    adc_gpio_init(ADC_GPIO_1);
+    adc_gpio_init(ADC_GPIO_2);
+    adc_gpio_init(ADC_GPIO_3);
+}
+
+static uint16_t read_adc_raw(uint channel) {
+    adc_select_input(channel);
+    sleep_us(ADC_SETTLE_TIME_US);
+    (void)adc_read();
+    sleep_us(ADC_INTER_SAMPLE_TIME_US);
+    return adc_read();
+}
+
+static float raw_to_mv(uint16_t raw_value) {
+    return ((float)raw_value * ADC_REF_VOLTAGE_MV) / ADC_MAX_READING;
+}
+
+static void moving_average_init(moving_average_t *filter) {
+    filter->sum = 0;
+    filter->index = 0;
+    filter->count = 0;
+
+    for (uint i = 0; i < MOVING_AVERAGE_SIZE; ++i) {
+        filter->samples[i] = 0;
+    }
+}
+
+static uint16_t moving_average_update(moving_average_t *filter, uint16_t sample) {
+    filter->sum -= filter->samples[filter->index];
+    filter->samples[filter->index] = sample;
+    filter->sum += sample;
+    filter->index = (filter->index + 1) % MOVING_AVERAGE_SIZE;
+
+    if (filter->count < MOVING_AVERAGE_SIZE) {
+        filter->count++;
+    }
+
+    return (uint16_t)(filter->sum / filter->count);
+}
+
+static void voltage_history_init(voltage_history_t *history) {
+    history->index = 0;
+    history->count = 0;
+
+    for (uint i = 0; i < HISTORY_SIZE; ++i) {
+        history->samples[i] = 0.0f;
+    }
+}
+
+static void voltage_history_push(voltage_history_t *history, float sample_mv) {
+    history->samples[history->index] = sample_mv;
+    history->index = (history->index + 1) % HISTORY_SIZE;
+
+    if (history->count < HISTORY_SIZE) {
+        history->count++;
+    }
+}
+
+static bool voltage_history_is_full(const voltage_history_t *history) {
+    return history->count >= HISTORY_SIZE;
+}
+
+static float voltage_history_get_oldest(const voltage_history_t *history) {
+    return history->samples[history->index];
+}
+
+static void start_buzzer_pattern(buzzer_pattern_t *pattern) {
+    pattern->active = true;
+    pattern->buzzer_on = true;
+    pattern->transitions_remaining = 3;
+    pattern->next_transition = delayed_by_ms(get_absolute_time(), BEEP_DURATION_MS);
+    pattern->rearm_time = delayed_by_ms(get_absolute_time(), ALERT_REARM_MS);
+    buzzer_set(true);
+}
+
+static void update_buzzer_pattern(buzzer_pattern_t *pattern) {
+    if (!pattern->active) {
+        return;
+    }
+
+    if (absolute_time_diff_us(get_absolute_time(), pattern->next_transition) > 0) {
+        return;
+    }
+
+    pattern->buzzer_on = !pattern->buzzer_on;
+    buzzer_set(pattern->buzzer_on);
+
+    if (pattern->transitions_remaining > 0) {
+        pattern->transitions_remaining--;
+    }
+
+    if (pattern->transitions_remaining == 0) {
+        pattern->active = false;
+        pattern->buzzer_on = false;
+        buzzer_set(false);
+        return;
+    }
+
+    pattern->next_transition = delayed_by_ms(get_absolute_time(), BEEP_PAUSE_MS);
+}
+
+int main(void) {
+    uint16_t raw_samples[ADC_INPUT_COUNT] = {0};
+    uint16_t filtered_samples[ADC_INPUT_COUNT] = {0};
+    float voltages_mv[ADC_INPUT_COUNT] = {0.0f};
+    moving_average_t filters[ADC_INPUT_COUNT];
+    voltage_history_t histories[ADC_INPUT_COUNT];
+    buzzer_pattern_t buzzer_pattern = {0};
+    bool system_ready = false;
+
+    init_outputs();
+    stdio_init_all();
+    sleep_ms(2000);
+    init_adc_inputs();
+
+    for (uint i = 0; i < ADC_INPUT_COUNT; ++i) {
+        moving_average_init(&filters[i]);
+        voltage_history_init(&histories[i]);
+    }
+
+    while (true) {
+        bool voltage_drop_detected = false;
+
+        update_buzzer_pattern(&buzzer_pattern);
+
+        for (uint i = 0; i < ADC_INPUT_COUNT; ++i) {
+            float reference_mv = 0.0f;
+
+            raw_samples[i] = read_adc_raw(adc_channels[i]);
+            filtered_samples[i] = moving_average_update(&filters[i], raw_samples[i]);
+            voltages_mv[i] = raw_to_mv(filtered_samples[i]);
+
+            if (
+                system_ready &&
+                voltage_history_is_full(&histories[i])
+            ) {
+                reference_mv = voltage_history_get_oldest(&histories[i]);
+
+                if ((reference_mv - voltages_mv[i]) >= DROP_THRESHOLD_MV) {
+                    voltage_drop_detected = true;
+                }
+            }
+
+            voltage_history_push(&histories[i], voltages_mv[i]);
+        }
+
+        if (
+            voltage_drop_detected &&
+            !buzzer_pattern.active &&
+            absolute_time_diff_us(get_absolute_time(), buzzer_pattern.rearm_time) <= 0
+        ) {
+            start_buzzer_pattern(&buzzer_pattern);
+        }
+
+        system_ready = true;
+
+        printf(
+            "\rA0:%4u/%4u %.1fmV | A1:%4u/%4u %.1fmV | A2:%4u/%4u %.1fmV | A3:%4u/%4u %.1fmV | B:%s    ",
+            raw_samples[0], filtered_samples[0], voltages_mv[0],
+            raw_samples[1], filtered_samples[1], voltages_mv[1],
+            raw_samples[2], filtered_samples[2], voltages_mv[2],
+            raw_samples[3], filtered_samples[3], voltages_mv[3],
+            buzzer_pattern.active ? "ON " : "OFF"
+        );
+        fflush(stdout);
+
+        sleep_ms(SAMPLE_PERIOD_MS);
+    }
+
+    return 0;
+}
