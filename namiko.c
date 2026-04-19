@@ -94,9 +94,13 @@ int main() {
 
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
+#include "hardware/uart.h"
 
 #define LED_PIN 2
+#define ALERT_LED_PIN 3
 #define BUZZER_PIN 4
+#define UART_TX_PIN 8
+#define UART_RX_PIN 9
 
 #define ADC_GPIO_0 26
 #define ADC_GPIO_1 27
@@ -122,7 +126,10 @@ int main() {
 #define BUZZER_ACTIVE_LEVEL 1
 #define BEEP_DURATION_MS 100
 #define BEEP_PAUSE_MS 50
-#define ALERT_REARM_MS 2000
+#define ALERT_HOLD_MS 5000
+#define RESTART_SETTLE_MS 2000
+#define ESP_UART_ID uart1
+#define ESP_UART_BAUD 115200
 
 typedef struct {
     uint16_t samples[MOVING_AVERAGE_SIZE];
@@ -142,7 +149,6 @@ typedef struct {
     bool buzzer_on;
     uint8_t transitions_remaining;
     absolute_time_t next_transition;
-    absolute_time_t rearm_time;
 } buzzer_pattern_t;
 
 static const uint adc_channels[ADC_INPUT_COUNT] = {
@@ -161,6 +167,10 @@ static void init_outputs(void) {
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);
 
+    gpio_init(ALERT_LED_PIN);
+    gpio_set_dir(ALERT_LED_PIN, GPIO_OUT);
+    gpio_put(ALERT_LED_PIN, 0);
+
     gpio_init(BUZZER_PIN);
     gpio_set_dir(BUZZER_PIN, GPIO_OUT);
     buzzer_set(false);
@@ -172,6 +182,19 @@ static void init_adc_inputs(void) {
     adc_gpio_init(ADC_GPIO_1);
     adc_gpio_init(ADC_GPIO_2);
     adc_gpio_init(ADC_GPIO_3);
+}
+
+static void init_esp_uart(void) {
+    uart_init(ESP_UART_ID, ESP_UART_BAUD);
+    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    uart_set_format(ESP_UART_ID, 8, 1, UART_PARITY_NONE);
+    uart_set_hw_flow(ESP_UART_ID, false, false);
+    uart_set_fifo_enabled(ESP_UART_ID, true);
+}
+
+static void send_trigger_to_esp32(void) {
+    uart_puts(ESP_UART_ID, "TRIGGER\r\n");
 }
 
 static uint16_t read_adc_raw(uint channel) {
@@ -235,12 +258,21 @@ static float voltage_history_get_oldest(const voltage_history_t *history) {
     return history->samples[history->index];
 }
 
+static void reset_detection_state(
+    moving_average_t filters[ADC_INPUT_COUNT],
+    voltage_history_t histories[ADC_INPUT_COUNT]
+) {
+    for (uint i = 0; i < ADC_INPUT_COUNT; ++i) {
+        moving_average_init(&filters[i]);
+        voltage_history_init(&histories[i]);
+    }
+}
+
 static void start_buzzer_pattern(buzzer_pattern_t *pattern) {
     pattern->active = true;
     pattern->buzzer_on = true;
     pattern->transitions_remaining = 3;
     pattern->next_transition = delayed_by_ms(get_absolute_time(), BEEP_DURATION_MS);
-    pattern->rearm_time = delayed_by_ms(get_absolute_time(), ALERT_REARM_MS);
     buzzer_set(true);
 }
 
@@ -278,21 +310,42 @@ int main(void) {
     voltage_history_t histories[ADC_INPUT_COUNT];
     buzzer_pattern_t buzzer_pattern = {0};
     bool system_ready = false;
+    bool alert_hold_active = false;
+    absolute_time_t alert_hold_end_time = nil_time;
+    bool restart_settle_active = false;
+    absolute_time_t restart_settle_end_time = nil_time;
 
     init_outputs();
     stdio_init_all();
     sleep_ms(2000);
     init_adc_inputs();
+    init_esp_uart();
 
-    for (uint i = 0; i < ADC_INPUT_COUNT; ++i) {
-        moving_average_init(&filters[i]);
-        voltage_history_init(&histories[i]);
-    }
+    reset_detection_state(filters, histories);
 
     while (true) {
         bool voltage_drop_detected = false;
 
         update_buzzer_pattern(&buzzer_pattern);
+
+        if (
+            alert_hold_active &&
+            absolute_time_diff_us(get_absolute_time(), alert_hold_end_time) <= 0
+        ) {
+            alert_hold_active = false;
+            gpio_put(ALERT_LED_PIN, 0);
+            reset_detection_state(filters, histories);
+            system_ready = false;
+            restart_settle_active = true;
+            restart_settle_end_time = delayed_by_ms(get_absolute_time(), RESTART_SETTLE_MS);
+        }
+
+        if (
+            restart_settle_active &&
+            absolute_time_diff_us(get_absolute_time(), restart_settle_end_time) <= 0
+        ) {
+            restart_settle_active = false;
+        }
 
         for (uint i = 0; i < ADC_INPUT_COUNT; ++i) {
             float reference_mv = 0.0f;
@@ -302,6 +355,8 @@ int main(void) {
             voltages_mv[i] = raw_to_mv(filtered_samples[i]);
 
             if (
+                !alert_hold_active &&
+                !restart_settle_active &&
                 system_ready &&
                 voltage_history_is_full(&histories[i])
             ) {
@@ -317,21 +372,29 @@ int main(void) {
 
         if (
             voltage_drop_detected &&
-            !buzzer_pattern.active &&
-            absolute_time_diff_us(get_absolute_time(), buzzer_pattern.rearm_time) <= 0
+            !alert_hold_active &&
+            !restart_settle_active
         ) {
             start_buzzer_pattern(&buzzer_pattern);
+            send_trigger_to_esp32();
+            gpio_put(ALERT_LED_PIN, 1);
+            alert_hold_active = true;
+            alert_hold_end_time = delayed_by_ms(get_absolute_time(), ALERT_HOLD_MS);
         }
 
-        system_ready = true;
+        if (!alert_hold_active && !restart_settle_active) {
+            system_ready = true;
+        }
 
         printf(
-            "\rA0:%4u/%4u %.1fmV | A1:%4u/%4u %.1fmV | A2:%4u/%4u %.1fmV | A3:%4u/%4u %.1fmV | B:%s    ",
+            "\rA0:%4u/%4u %.1fmV | A1:%4u/%4u %.1fmV | A2:%4u/%4u %.1fmV | A3:%4u/%4u %.1fmV | B:%s | L:%s | S:%s    ",
             raw_samples[0], filtered_samples[0], voltages_mv[0],
             raw_samples[1], filtered_samples[1], voltages_mv[1],
             raw_samples[2], filtered_samples[2], voltages_mv[2],
             raw_samples[3], filtered_samples[3], voltages_mv[3],
-            buzzer_pattern.active ? "ON " : "OFF"
+            buzzer_pattern.active ? "ON " : "OFF",
+            alert_hold_active ? "ON " : "OFF",
+            restart_settle_active ? "ON " : "OFF"
         );
         fflush(stdout);
 
