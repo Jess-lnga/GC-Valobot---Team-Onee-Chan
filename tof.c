@@ -33,6 +33,19 @@ static tof_t g_tof_1;
 static tof_t g_tof_2;
 static tof_t g_tof_3;
 static bool g_tof_initialized = false;
+static int d_right = -1;
+static int d_front = -1;
+static int d_left = -1;
+
+static bool continuous_mesure = true;
+
+void pca_is_active(void) {
+    continuous_mesure = false;
+}
+
+void pca_is_not_active(void) {
+    continuous_mesure = true;
+}
 
 static bool write8_addr(i2c_inst_t *i2c, uint8_t addr, uint8_t reg, uint8_t val)
 {
@@ -240,6 +253,9 @@ static bool tof_init_3(tof_t *t1, tof_t *t2, tof_t *t3,
 bool tof_init_all(void)
 {
     TOF_LOG("Starting TOF bringup\n");
+    d_right = -1;
+    d_front = -1;
+    d_left = -1;
     g_tof_initialized = tof_init_3(&g_tof_1,
                                    &g_tof_2,
                                    &g_tof_3,
@@ -256,22 +272,49 @@ bool tof_init_all(void)
     return g_tof_initialized;
 }
 
-int get_dist_1(void)
+void mes_dist_right(void)
 {
-    if (!g_tof_initialized) return -1;
-    return tof_read_mm(&g_tof_1);
+    if (!g_tof_initialized) {
+        d_right = -1;
+        return;
+    }
+
+    d_right = tof_read_mm(&g_tof_1);
 }
 
-int get_dist_2(void)
+void mes_dist_front(void)
 {
-    if (!g_tof_initialized) return -1;
-    return tof_read_mm(&g_tof_2);
+    if (!g_tof_initialized) {
+        d_front = -1;
+        return;
+    }
+
+    d_front = tof_read_mm(&g_tof_2);
 }
 
-int get_dist_3(void)
+void mes_dist_left(void)
 {
-    if (!g_tof_initialized) return -1;
-    return tof_read_mm(&g_tof_3);
+    if (!g_tof_initialized) {
+        d_left = -1;
+        return;
+    }
+
+    d_left = tof_read_mm(&g_tof_3);
+}
+
+int get_dist_right(void)
+{
+    return d_right;
+}
+
+int get_dist_front(void)
+{
+    return d_front;
+}
+
+int get_dist_left(void)
+{
+    return d_left;
 }
 
 void tof_stop_all(void)
@@ -279,5 +322,8 @@ void tof_stop_all(void)
     tof_stop(&g_tof_1);
     tof_stop(&g_tof_2);
     tof_stop(&g_tof_3);
+    d_right = -1;
+    d_front = -1;
+    d_left = -1;
     g_tof_initialized = false;
 }

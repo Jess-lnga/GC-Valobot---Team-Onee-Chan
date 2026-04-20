@@ -19,11 +19,19 @@ typedef struct {
 
 bool tof_init_all(void);
 
-int get_dist_1(void);
-int get_dist_2(void);
-int get_dist_3(void);
+void mes_dist_right(void);
+void mes_dist_front(void);
+void mes_dist_left(void);
+
+int get_dist_right(void);
+int get_dist_front(void);
+int get_dist_left(void);
 
 void tof_stop_all(void);
+
+void pca_is_active(void);
+void pca_is_not_active(void);
+
 
 bool tof_read_model_id(tof_t *t, uint8_t *id);
 bool tof_read_irq_status(tof_t *t, uint8_t *st);

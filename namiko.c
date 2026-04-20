@@ -2,7 +2,7 @@
 // Author: Jérôme ESSOLA ELANGA - jerome.essolaelanga@epfl.ch
 // Team members: Jérôme ESSOLA ELANGA
 
-/*
+
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -11,6 +11,7 @@
 
 #include "ov7670.h"
 #include "frame_analysis.h"
+#include "labyrinthe.h"
 #include "pca9685.h"
 #include "line_following.h"
 #include "tof.h"
@@ -24,32 +25,62 @@ static void core1_entry(void) {
     wake_up();
     sleep_ms(2000);
 
-    int angle_deg = 0;
-    int increment = 0;
-
     while(true){
-        follow_line_step();
-        
-        //if (!g_tof_ready) {
-        //    printf("TOF init failed\n");
-        //    sleep_ms(500);
-        //    continue;
-        //}
+        absolute_time_t t0;
+        absolute_time_t t1;
+        absolute_time_t t2;
+        absolute_time_t t3;
+        int64_t dt_right_us;
+        int64_t dt_front_us;
+        int64_t dt_left_us;
+        int64_t dt_total_us;
+        double dt_right_ms;
+        double dt_front_ms;
+        double dt_left_ms;
+        double dt_total_ms;
+        int d_right;
+        int d_front;
+        int d_left;
 
-        //int d1 = get_dist_1();
-        //int d2 = get_dist_2();
-        //int d3 = get_dist_3();
+        if (!g_tof_ready) {
+            printf("\rTOF init failed                                        ");
+            fflush(stdout);
+            sleep_ms(250);
+            continue;
+        }
 
-        //printf("\033[H\033[J");
-        //printf("TOF distances: d1=%d mm | d2=%d mm | d3=%d mm\n", d1, d2, d3);
-        //printf("\033[1GTOF distances: d1=%d mm | d2=%d mm | d3=%d mm    ", d1, d2, d3);
-        //fflush(stdout);
+        t0 = get_absolute_time();
+        mes_dist_right();
+        t1 = get_absolute_time();
+        mes_dist_front();
+        t2 = get_absolute_time();
+        mes_dist_left();
+        t3 = get_absolute_time();
 
+        d_right = get_dist_right();
+        d_front = get_dist_front();
+        d_left = get_dist_left();
 
+        dt_right_us = absolute_time_diff_us(t0, t1);
+        dt_front_us = absolute_time_diff_us(t1, t2);
+        dt_left_us = absolute_time_diff_us(t2, t3);
+        dt_total_us = absolute_time_diff_us(t0, t3);
+        dt_right_ms = (double)dt_right_us / 1000.0;
+        dt_front_ms = (double)dt_front_us / 1000.0;
+        dt_left_ms = (double)dt_left_us / 1000.0;
+        dt_total_ms = (double)dt_total_us / 1000.0;
 
-
-        //sleep_ms(100);
-        
+        printf(
+            "\033[1GTOF | R=%4d mm | F=%4d mm | L=%4d mm | tR=%7.2f ms | tF=%7.2f ms | tL=%7.2f ms | tTot=%7.2f ms        ",
+            d_right,
+            d_front,
+            d_left,
+            dt_right_ms,
+            dt_front_ms,
+            dt_left_ms,
+            dt_total_ms
+        );
+        fflush(stdout);
     }
 }
 
@@ -66,6 +97,8 @@ static void init_all(void) {
     g_tof_ready = tof_init_all();
     printf("TOF init: %s\n", g_tof_ready ? "OK" : "FAILED");
 
+    labyrinthe_reset();
+
     sleep_ms(100);
 
     multicore_launch_core1(core1_entry);
@@ -77,17 +110,17 @@ int main() {
     static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
 
     while (true) {
-        ov7670_capture_frame(frame);
-        find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-        ov7670_send_frame_usb(frame);
+        //ov7670_capture_frame(frame);
+        //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+        //ov7670_send_frame_usb(frame);
     
         
         sleep_ms(1);
     }
 }
 
-*/
 
+/*
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -403,3 +436,5 @@ int main(void) {
 
     return 0;
 }
+
+*/
