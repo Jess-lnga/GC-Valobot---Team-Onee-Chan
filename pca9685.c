@@ -3,6 +3,7 @@
 // Team members: Jérôme ESSOLA ELANGA
 
 #include "pca9685.h"
+#include "tof.h"
 
 #define I2C_PORT      i2c0
 #define I2C_SDA_PIN   4      // GP4
@@ -780,6 +781,7 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
+            mes_all_dist();
             sleep_ms(10);
         }
 
@@ -793,6 +795,7 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));  
 
+            mes_all_dist();
             sleep_ms(10);
         }
         
@@ -807,6 +810,7 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
             
+            mes_all_dist();
             sleep_ms(10);
         }
 
@@ -835,6 +839,7 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_FL, 0, to_ticks_us(us1r, us_par_tick));
             pca_write_pwm(COXA_BR, 0, to_ticks_us(us2r, us_par_tick));  
 
+            mes_all_dist();
             sleep_ms(10);
         }
         
@@ -847,6 +852,7 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));  
             
+            mes_all_dist();
             sleep_ms(10);
         }
         
@@ -917,6 +923,7 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
+            mes_all_dist();
             sleep_ms(10);
 
         }

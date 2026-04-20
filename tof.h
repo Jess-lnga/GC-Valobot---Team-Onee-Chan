@@ -14,6 +14,7 @@ typedef struct {
     uint8_t xshut_pin;
     uint8_t stop_variable;
     uint32_t io_timeout_us;
+    int last_mm;
     bool started;
 } tof_t;
 
@@ -23,9 +24,17 @@ void mes_dist_right(void);
 void mes_dist_front(void);
 void mes_dist_left(void);
 
+void mes_all_dist(void);
+
 int get_dist_right(void);
 int get_dist_front(void);
 int get_dist_left(void);
+
+int get_dist_mean_right(void);
+int get_dist_mean_front(void);
+int get_dist_mean_left(void);
+
+
 
 void tof_stop_all(void);
 

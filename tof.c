@@ -20,6 +20,7 @@
 #define REG_RESULT_INTERRUPT_STATUS   0x13
 #define REG_RESULT_RANGE_STATUS       0x14
 #define REG_I2C_SLAVE_DEVICE_ADDRESS  0x8A
+#define TOF_MEAN_WINDOW               20
 
 #define TOF_DEBUG 0
 
@@ -32,12 +33,60 @@
 static tof_t g_tof_1;
 static tof_t g_tof_2;
 static tof_t g_tof_3;
-static bool g_tof_initialized = false;
+
 static int d_right = -1;
 static int d_front = -1;
-static int d_left = -1;
+static int d_left  = -1;
 
+static int mean_d_right = 0;
+static int mean_d_front = 0;
+static int mean_d_left  = 0;
+
+static bool g_tof_initialized = false;
 static bool continuous_mesure = true;
+
+typedef struct {
+    int samples[TOF_MEAN_WINDOW];
+    int index;
+    int count;
+    int sum;
+} tof_mean_filter_t;
+
+static tof_mean_filter_t g_mean_right;
+static tof_mean_filter_t g_mean_front;
+static tof_mean_filter_t g_mean_left;
+
+static void tof_mean_reset(tof_mean_filter_t *filter)
+{
+    filter->index = 0;
+    filter->count = 0;
+    filter->sum = 0;
+
+    for (int i = 0; i < TOF_MEAN_WINDOW; ++i) {
+        filter->samples[i] = 0;
+    }
+}
+
+static int tof_mean_update(tof_mean_filter_t *filter, int sample)
+{
+    if (sample < 0) {
+        return (filter->count > 0) ? (filter->sum / filter->count) : 0;
+    }
+
+    if (filter->count < TOF_MEAN_WINDOW) {
+        filter->samples[filter->index] = sample;
+        filter->sum += sample;
+        filter->index = (filter->index + 1) % TOF_MEAN_WINDOW;
+        filter->count++;
+    } else {
+        filter->sum -= filter->samples[filter->index];
+        filter->samples[filter->index] = sample;
+        filter->sum += sample;
+        filter->index = (filter->index + 1) % TOF_MEAN_WINDOW;
+    }
+
+    return filter->sum / filter->count;
+}
 
 void pca_is_active(void) {
     continuous_mesure = false;
@@ -142,35 +191,26 @@ static void tof_stop(tof_t *t)
 
 static int tof_read_mm(tof_t *t)
 {
-    absolute_time_t t0;
+    uint8_t st = 0;
 
     if (!t || !t->started) return -1;
 
-    t0 = get_absolute_time();
-    while (true) {
-        uint8_t st = 0;
-        if (!read8(t, REG_RESULT_INTERRUPT_STATUS, &st)) {
-            TOF_LOG("TOF 0x%02X failed reading interrupt status\n", t->addr);
-            return -1;
-        }
-
-        if ((st & 0x07) != 0) {
-            uint16_t mm = 0;
-            if (!read16(t, (uint8_t)(REG_RESULT_RANGE_STATUS + 10), &mm)) {
-                TOF_LOG("TOF 0x%02X failed reading distance\n", t->addr);
-                return -1;
-            }
-            (void)write8(t, REG_SYSTEM_INTERRUPT_CLEAR, 0x01);
-            return (int)mm;
-        }
-
-        if (absolute_time_diff_us(t0, get_absolute_time()) > (int64_t)t->io_timeout_us) {
-            TOF_LOG("TOF 0x%02X timeout waiting data ready, status=0x%02X\n", t->addr, st);
-            return -1;
-        }
-
-        tight_loop_contents();
+    if (!read8(t, REG_RESULT_INTERRUPT_STATUS, &st)) {
+        TOF_LOG("TOF 0x%02X failed reading interrupt status\n", t->addr);
+        return t->last_mm;
     }
+
+    if ((st & 0x07) != 0) {
+        uint16_t mm = 0;
+        if (!read16(t, (uint8_t)(REG_RESULT_RANGE_STATUS + 10), &mm)) {
+            TOF_LOG("TOF 0x%02X failed reading distance\n", t->addr);
+            return t->last_mm;
+        }
+        (void)write8(t, REG_SYSTEM_INTERRUPT_CLEAR, 0x01);
+        t->last_mm = (int)mm;
+    }
+
+    return t->last_mm;
 }
 
 static void xshut_init_pin(uint8_t pin)
@@ -200,6 +240,7 @@ static bool bringup_one(tof_t *t, uint8_t xshut_pin, uint8_t new_addr)
 
     t->xshut_pin = xshut_pin;
     t->addr = TOF_DEFAULT_ADDR;
+    t->last_mm = -1;
     t->started = false;
 
     xshut_set(xshut_pin, true);
@@ -256,6 +297,15 @@ bool tof_init_all(void)
     d_right = -1;
     d_front = -1;
     d_left = -1;
+    mean_d_right = 0;
+    mean_d_front = 0;
+    mean_d_left = 0;
+    g_tof_1.last_mm = -1;
+    g_tof_2.last_mm = -1;
+    g_tof_3.last_mm = -1;
+    tof_mean_reset(&g_mean_right);
+    tof_mean_reset(&g_mean_front);
+    tof_mean_reset(&g_mean_left);
     g_tof_initialized = tof_init_3(&g_tof_1,
                                    &g_tof_2,
                                    &g_tof_3,
@@ -276,30 +326,44 @@ void mes_dist_right(void)
 {
     if (!g_tof_initialized) {
         d_right = -1;
+        mean_d_right = 0;
         return;
     }
 
     d_right = tof_read_mm(&g_tof_1);
+    mean_d_right = tof_mean_update(&g_mean_right, d_right);
 }
 
 void mes_dist_front(void)
 {
     if (!g_tof_initialized) {
         d_front = -1;
+        mean_d_front = 0;
         return;
     }
 
     d_front = tof_read_mm(&g_tof_2);
+    mean_d_front = tof_mean_update(&g_mean_front, d_front);
 }
 
 void mes_dist_left(void)
 {
     if (!g_tof_initialized) {
         d_left = -1;
+        mean_d_left = 0;
         return;
     }
 
     d_left = tof_read_mm(&g_tof_3);
+    mean_d_left = tof_mean_update(&g_mean_left, d_left);
+}
+
+
+void mes_all_dist(void)
+{
+    mes_dist_right();
+    mes_dist_front();
+    mes_dist_left();
 }
 
 int get_dist_right(void)
@@ -317,13 +381,37 @@ int get_dist_left(void)
     return d_left;
 }
 
+int get_dist_mean_right(void)
+{
+    return mean_d_right;
+}
+
+int get_dist_mean_front(void)
+{
+    return mean_d_front;
+}
+
+int get_dist_mean_left(void)
+{
+    return mean_d_left;
+}
+
 void tof_stop_all(void)
 {
     tof_stop(&g_tof_1);
     tof_stop(&g_tof_2);
     tof_stop(&g_tof_3);
+    g_tof_1.last_mm = -1;
+    g_tof_2.last_mm = -1;
+    g_tof_3.last_mm = -1;
     d_right = -1;
     d_front = -1;
     d_left = -1;
+    mean_d_right = 0;
+    mean_d_front = 0;
+    mean_d_left = 0;
+    tof_mean_reset(&g_mean_right);
+    tof_mean_reset(&g_mean_front);
+    tof_mean_reset(&g_mean_left);
     g_tof_initialized = false;
 }

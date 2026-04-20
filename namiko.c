@@ -25,62 +25,50 @@ static void core1_entry(void) {
     wake_up();
     sleep_ms(2000);
 
+    printf("\033[H\033[J");
+
     while(true){
-        absolute_time_t t0;
-        absolute_time_t t1;
-        absolute_time_t t2;
-        absolute_time_t t3;
-        int64_t dt_right_us;
-        int64_t dt_front_us;
-        int64_t dt_left_us;
-        int64_t dt_total_us;
-        double dt_right_ms;
-        double dt_front_ms;
-        double dt_left_ms;
-        double dt_total_ms;
         int d_right;
         int d_front;
         int d_left;
+        int mean_d_right;
+        int mean_d_front;
+        int mean_d_left;
 
         if (!g_tof_ready) {
-            printf("\rTOF init failed                                        ");
+            printf("\033[HTOF init failed                                        \n");
             fflush(stdout);
             sleep_ms(250);
             continue;
         }
 
-        t0 = get_absolute_time();
-        mes_dist_right();
-        t1 = get_absolute_time();
-        mes_dist_front();
-        t2 = get_absolute_time();
-        mes_dist_left();
-        t3 = get_absolute_time();
+        //mes_dist_right();
+        //mes_dist_front();
+        //mes_dist_left ();
+
+        mes_all_dist();
 
         d_right = get_dist_right();
         d_front = get_dist_front();
-        d_left = get_dist_left();
+        d_left  = get_dist_left ();
 
-        dt_right_us = absolute_time_diff_us(t0, t1);
-        dt_front_us = absolute_time_diff_us(t1, t2);
-        dt_left_us = absolute_time_diff_us(t2, t3);
-        dt_total_us = absolute_time_diff_us(t0, t3);
-        dt_right_ms = (double)dt_right_us / 1000.0;
-        dt_front_ms = (double)dt_front_us / 1000.0;
-        dt_left_ms = (double)dt_left_us / 1000.0;
-        dt_total_ms = (double)dt_total_us / 1000.0;
+        mean_d_right = get_dist_mean_right();
+        mean_d_front = get_dist_mean_front();
+        mean_d_left  = get_dist_mean_left();
 
         printf(
-            "\033[1GTOF | R=%4d mm | F=%4d mm | L=%4d mm | tR=%7.2f ms | tF=%7.2f ms | tL=%7.2f ms | tTot=%7.2f ms        ",
+            "\033[HTOF mean | R=%4d mm | F=%4d mm | L=%4d mm        \n"
+            "TOF inst | R=%4d mm | F=%4d mm | L=%4d mm        ",
+            mean_d_right,
+            mean_d_front,
+            mean_d_left,
             d_right,
             d_front,
-            d_left,
-            dt_right_ms,
-            dt_front_ms,
-            dt_left_ms,
-            dt_total_ms
+            d_left
         );
         fflush(stdout);
+
+        sleep_ms(10);
     }
 }
 
