@@ -3,7 +3,7 @@
 // Team members: Jérôme ESSOLA ELANGA
 
 
-#include "frame_analysis_helpers.h"
+#include "frame_find_line_helpers.h"
 
 #define BRIGHTNESS_HARD_BLACK_MAX     26
 #define BRIGHTNESS_DYNAMIC_MARGIN      8

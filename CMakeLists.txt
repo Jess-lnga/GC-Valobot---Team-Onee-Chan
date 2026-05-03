@@ -43,8 +43,8 @@ add_executable(onee_chan
     namiko.c
     ov7670.c
     ov7670_pio_dma.c
-    frame_analysis.c
-    frame_analysis_helpers.c
+    frame_find_line.c
+    frame_find_line_helpers.c
     labyrinthe.c
     line_following.c
     tof.c

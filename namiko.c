@@ -10,7 +10,7 @@
 #include "hardware/i2c.h"
 
 #include "ov7670.h"
-#include "frame_analysis.h"
+#include "frame_find_line.h"
 #include "labyrinthe.h"
 #include "pca9685.h"
 #include "line_following.h"

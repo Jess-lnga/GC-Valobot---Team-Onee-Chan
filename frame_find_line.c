@@ -3,9 +3,9 @@
 // Team members: Jérôme ESSOLA ELANGA
 
 
-#include "frame_analysis.h"
+#include "frame_find_line.h"
 
-#include "frame_analysis_helpers.h"
+#include "frame_find_line_helpers.h"
 
 #define LINE_EDGE_MARGIN                 20
 #define LINE_MAX_POSITION_JUMP           40
