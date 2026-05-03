@@ -11,6 +11,7 @@
 
 #include "ov7670.h"
 #include "frame_find_line.h"
+#include "frame_find_target.h"
 #include "labyrinthe.h"
 #include "pca9685.h"
 #include "line_following.h"
@@ -100,7 +101,7 @@ static void init_all(void) {
 
     sleep_ms(100);
 
-    gc_valobot_mode = LINE_FOLLOWING_MODE; // Labyrinthe
+    gc_valobot_mode = SHOOTING_MODE;
     multicore_launch_core1(core1_entry);
 }
 
@@ -113,6 +114,15 @@ int main() {
         if(gc_valobot_mode == LINE_FOLLOWING_MODE){
             ov7670_capture_frame(frame);
             //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+            
+            if(debug){
+                ov7670_send_frame_usb(frame);  
+            }          
+        }
+
+        if(gc_valobot_mode == SHOOTING_MODE){
+            ov7670_capture_frame(frame);
+            find_targets(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
             
             if(debug){
                 ov7670_send_frame_usb(frame);  

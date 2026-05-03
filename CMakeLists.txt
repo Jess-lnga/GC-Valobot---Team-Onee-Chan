@@ -45,6 +45,8 @@ add_executable(onee_chan
     ov7670_pio_dma.c
     frame_find_line.c
     frame_find_line_helpers.c
+    frame_find_target.c
+    frame_find_target_helpers.c
     labyrinthe.c
     line_following.c
     tof.c
