@@ -23,11 +23,58 @@ static void core1_entry(void) {
     init_servo_ctrl();
 
     wake_up();
-    sleep_ms(2000);
+    //sleep_ms(2000);
 
-    printf("\033[H\033[J");
+    for(int i = 0; i < 40; ++i){
+        mes_all_dist();
+        sleep_ms(50);
+    }
 
     while(true){
+        
+        solve_maze();
+        mes_all_dist();
+
+        sleep_ms(5);
+    }
+
+}
+
+static void init_all(void) {
+    stdio_init_all();
+    stdio_set_translate_crlf(&stdio_usb, false);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    sleep_ms(2000);
+
+    ov7670_init();
+
+    // ok : on repasse i2c0 à 400k après init caméra
+    i2c_init(i2c0, 400 * 1000);
+    g_tof_ready = tof_init_all();
+    //printf("TOF init: %s\n", g_tof_ready ? "OK" : "FAILED");
+
+    sleep_ms(100);
+
+    multicore_launch_core1(core1_entry);
+}
+
+int main() {
+    init_all();
+
+    static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
+
+    while (true) {
+        //ov7670_capture_frame(frame);
+        //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+        //ov7670_send_frame_usb(frame);
+    
+        
+        sleep_ms(1);
+    }
+}
+
+
+/*
         int d_right;
         int d_front;
         int d_left;
@@ -69,45 +116,7 @@ static void core1_entry(void) {
         fflush(stdout);
 
         sleep_ms(10);
-    }
-}
-
-static void init_all(void) {
-    stdio_init_all();
-    stdio_set_translate_crlf(&stdio_usb, false);
-    setvbuf(stdout, NULL, _IONBF, 0);
-    sleep_ms(2000);
-
-    ov7670_init();
-
-    // ok : on repasse i2c0 à 400k après init caméra
-    i2c_init(i2c0, 400 * 1000);
-    g_tof_ready = tof_init_all();
-    printf("TOF init: %s\n", g_tof_ready ? "OK" : "FAILED");
-
-    labyrinthe_reset();
-
-    sleep_ms(100);
-
-    multicore_launch_core1(core1_entry);
-}
-
-int main() {
-    init_all();
-
-    static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
-
-    while (true) {
-        //ov7670_capture_frame(frame);
-        //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-        //ov7670_send_frame_usb(frame);
-    
-        
-        sleep_ms(1);
-    }
-}
-
-
+*/
 /*
 #include <stdbool.h>
 #include <stdint.h>

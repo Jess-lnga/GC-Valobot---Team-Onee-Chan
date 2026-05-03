@@ -4,10 +4,5 @@
 
 #pragma once
 
-void labyrinthe_reset(void);
-void solve_labyrinthe(void);
 void solve_maze(void);
 
-int labyrinthe_get_dist_left(void);
-int labyrinthe_get_dist_front(void);
-int labyrinthe_get_dist_right(void);

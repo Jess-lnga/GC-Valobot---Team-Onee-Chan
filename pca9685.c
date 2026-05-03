@@ -524,7 +524,9 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
         pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
         
-        sleep_ms(10);
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 
     // Transition for mouvement:
@@ -554,14 +556,18 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(COXA_FL, 0, to_ticks_us(us1r, us_par_tick));
         pca_write_pwm(COXA_BR, 0, to_ticks_us(us2r, us_par_tick));  
 
-        sleep_ms(10);
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 
     for (int us = max; us >= middle; us -= air_step) {              //Get the legs down
         pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
         pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));  
         
-        sleep_ms(10);
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 
     start_us1r = digit_theta_1r;
@@ -594,7 +600,9 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
         pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
-        sleep_ms(10);
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 
 
@@ -605,7 +613,9 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
         pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
         
-        sleep_ms(10);
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 
     // Transition for mouvement:
@@ -626,6 +636,7 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
         pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
+        mes_all_dist();
         sleep_ms(10);
     }
 
@@ -633,7 +644,9 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
         pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));  
 
-        sleep_ms(10);
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 
     start_us1r = 1500;
@@ -668,8 +681,10 @@ void move(float D, float theta_t, float theta_r){
         pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
         pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
-        sleep_ms(10);
 
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
     }
 }
 
@@ -753,7 +768,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
             
-            sleep_ms(10);
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+            
         }
 
 
@@ -781,8 +799,9 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
+            sleep_ms(1);
             mes_all_dist();
-            sleep_ms(10);
+            sleep_ms(9);
         }
 
 
@@ -795,8 +814,9 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));  
 
+            sleep_ms(1);
             mes_all_dist();
-            sleep_ms(10);
+            sleep_ms(9);
         }
         
         _moved_side = LEFT_SIDE;
@@ -810,8 +830,9 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
             
+            sleep_ms(1);
             mes_all_dist();
-            sleep_ms(10);
+            sleep_ms(9);
         }
 
         _moved_side = RIGHT_SIDE;
@@ -839,8 +860,9 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_FL, 0, to_ticks_us(us1r, us_par_tick));
             pca_write_pwm(COXA_BR, 0, to_ticks_us(us2r, us_par_tick));  
 
+            sleep_ms(1);
             mes_all_dist();
-            sleep_ms(10);
+            sleep_ms(9);
         }
         
         _moved_side = RIGHT_SIDE;
@@ -852,8 +874,9 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));  
             
+            sleep_ms(1);
             mes_all_dist();
-            sleep_ms(10);
+            sleep_ms(9);
         }
         
         _moved_side = RIGHT_SIDE;
@@ -923,8 +946,9 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
+            sleep_ms(1);
             mes_all_dist();
-            sleep_ms(10);
+            sleep_ms(9);
 
         }
 

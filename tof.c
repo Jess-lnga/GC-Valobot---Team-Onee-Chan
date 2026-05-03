@@ -366,34 +366,38 @@ void mes_all_dist(void)
     mes_dist_left();
 }
 
+#define OFFSET_TOF_RIGHT_MM -80
+#define OFFSET_TOF_FRONT_MM -33
+#define OFFSET_TOF_LEFT_MM -40
+
 int get_dist_right(void)
 {
-    return d_right;
+    return d_right + OFFSET_TOF_RIGHT_MM;
 }
 
 int get_dist_front(void)
 {
-    return d_front;
+    return d_front + OFFSET_TOF_FRONT_MM;
 }
 
 int get_dist_left(void)
 {
-    return d_left;
+    return d_left + OFFSET_TOF_LEFT_MM;
 }
 
 int get_dist_mean_right(void)
 {
-    return mean_d_right;
+    return mean_d_right + OFFSET_TOF_RIGHT_MM;
 }
 
 int get_dist_mean_front(void)
 {
-    return mean_d_front;
+    return mean_d_front + OFFSET_TOF_FRONT_MM;
 }
 
 int get_dist_mean_left(void)
 {
-    return mean_d_left;
+    return mean_d_left + OFFSET_TOF_LEFT_MM;
 }
 
 void tof_stop_all(void)
