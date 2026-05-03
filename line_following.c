@@ -7,7 +7,7 @@
 
 #include <stdio.h>
 
-#include "frame_analysis.h"
+#include "frame_find_line.h"
 #include "pca9685.h"
 
 #define LINE_CENTER_PIXEL           60.0f

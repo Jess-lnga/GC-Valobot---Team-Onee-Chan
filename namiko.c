@@ -16,12 +16,23 @@
 #include "line_following.h"
 #include "tof.h"
 
+#define LINE_FOLLOWING_MODE         0
+#define RISING_SLOPE_MODE           1
+#define MIDDLE_SLOPE_MODE           2
+#define FALLING_SLOPE_MODE          3
+#define LABYRINTHE_TRANSITION_MODE  4
+#define LABYRINTHE_MODE             5
+#define SHOOTING_TRANSITION_MODE    6
+#define SHOOTING_MODE               7
+#define GOING_TO_SPYKE_MODE         8
+#define FINISHING_MODE              9
+
 static volatile bool g_line_following_ready = false;
 static volatile bool g_tof_ready = false;
 
 static bool debug = true;
 
-static int gc_valobot_mode = 0; 
+static int gc_valobot_mode = LINE_FOLLOWING_MODE; 
 /* 
 0 = line following, 
 1 = rising_slope, 
@@ -49,12 +60,12 @@ static void core1_entry(void) {
     ///////////////////////////////////////////////////////
     while(true){
 
-        if(gc_valobot_mode == 0){
-            follow_line_step();
+        if(gc_valobot_mode == LINE_FOLLOWING_MODE){
+            //follow_line_step();
             sleep_ms(1);
         }
 
-        if(gc_valobot_mode == 5){ // Labyrinthe
+        if(gc_valobot_mode == LABYRINTHE_MODE){ // Labyrinthe
             bool maze_solved = false;
 
             while(!maze_solved){
@@ -65,10 +76,10 @@ static void core1_entry(void) {
                 sleep_ms(5);
             }
 
-            gc_valobot_mode = 6; //Going to the mode for transitionning before shooting
+            gc_valobot_mode = SHOOTING_TRANSITION_MODE; //Going to the mode for transitionning before shooting
         }
 
-        if(gc_valobot_mode == 6){ // Transition before shooting
+        if(gc_valobot_mode == SHOOTING_TRANSITION_MODE){ // Transition before shooting
             sleep_ms(5000);
         }
     }
@@ -89,7 +100,7 @@ static void init_all(void) {
 
     sleep_ms(100);
 
-    gc_valobot_mode = 5; // Labyrinthe
+    gc_valobot_mode = LINE_FOLLOWING_MODE; // Labyrinthe
     multicore_launch_core1(core1_entry);
 }
 
@@ -99,17 +110,15 @@ int main() {
     static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
 
     while (true) {
-        if(gc_valobot_mode == 0){ // line following
+        if(gc_valobot_mode == LINE_FOLLOWING_MODE){
             ov7670_capture_frame(frame);
-            find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+            //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
             
             if(debug){
                 ov7670_send_frame_usb(frame);  
             }          
         }
-        
-    
-        
+         
         sleep_ms(1);
     }
 }
