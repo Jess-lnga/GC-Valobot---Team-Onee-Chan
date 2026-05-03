@@ -19,25 +19,59 @@
 static volatile bool g_line_following_ready = false;
 static volatile bool g_tof_ready = false;
 
-static void core1_entry(void) {
-    init_servo_ctrl();
+static bool debug = true;
 
+static int gc_valobot_mode = 0; 
+/* 
+0 = line following, 
+1 = rising_slope, 
+2 = middle_slope, 
+3 = falling_slope, 
+4 = labyrinthe_transition, 
+5 = labyrinthe, 
+6 = shooting_transition
+7 = shooting,
+8 = going_to_spyke,
+9 = finishing 
+*/  
+
+
+static void core1_entry(void) {
+    ///////////// SERVO CORE - INITIALIZATION /////////////
+    init_servo_ctrl();
     wake_up();
-    //sleep_ms(2000);
 
     for(int i = 0; i < 40; ++i){
         mes_all_dist();
         sleep_ms(50);
     }
 
+    ///////////////////////////////////////////////////////
     while(true){
-        
-        solve_maze();
-        mes_all_dist();
 
-        sleep_ms(5);
+        if(gc_valobot_mode == 0){
+            follow_line_step();
+            sleep_ms(1);
+        }
+
+        if(gc_valobot_mode == 5){ // Labyrinthe
+            bool maze_solved = false;
+
+            while(!maze_solved){
+                
+                maze_solved = solve_maze();
+                mes_all_dist();
+
+                sleep_ms(5);
+            }
+
+            gc_valobot_mode = 6; //Going to the mode for transitionning before shooting
+        }
+
+        if(gc_valobot_mode == 6){ // Transition before shooting
+            sleep_ms(5000);
+        }
     }
-
 }
 
 static void init_all(void) {
@@ -55,6 +89,7 @@ static void init_all(void) {
 
     sleep_ms(100);
 
+    gc_valobot_mode = 5; // Labyrinthe
     multicore_launch_core1(core1_entry);
 }
 
@@ -64,9 +99,15 @@ int main() {
     static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
 
     while (true) {
-        //ov7670_capture_frame(frame);
-        //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-        //ov7670_send_frame_usb(frame);
+        if(gc_valobot_mode == 0){ // line following
+            ov7670_capture_frame(frame);
+            find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+            
+            if(debug){
+                ov7670_send_frame_usb(frame);  
+            }          
+        }
+        
     
         
         sleep_ms(1);

@@ -4,5 +4,6 @@
 
 #pragma once
 
-void solve_maze(void);
+#include <stdbool.h>
 
+bool solve_maze(void);
