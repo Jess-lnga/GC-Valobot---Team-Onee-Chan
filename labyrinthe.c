@@ -51,12 +51,55 @@ static bool is_front_blocked(int dist_mm)
     return dist_mm > 0 && dist_mm <= LABYRINTHE_FRONT_THRESHOLD_MM;
 }
 
-static void perform_turn_90(int turn_direction)
+static void perform_turn_90(int turn_direction, int front_dist_mm)
 {
     const float theta_r_cmd = (float)turn_direction * LABYRINTHE_TURN_THETA_R_RAD;
-
-    for (int i = 0; i < 2*LABYRINTHE_TURN_90_STEPS; ++i) {
+    
+    /*
+    for (int i = 0; i < LABYRINTHE_TURN_90_STEPS; ++i) {
         move_step(0.0f, 0.0f, theta_r_cmd);
+        mes_all_dist();
+    }
+    */
+
+    mes_all_dist();
+
+    int d_front = get_dist_mean_front();
+    int d_left  = get_dist_mean_left();
+    int d_right = get_dist_mean_right();
+    
+    int epsilon_front_mm = 200;
+    int epsilon_side_mm = 0;
+
+    int INT_MAX = 2147483647;
+
+    if(turn_direction == -1){
+        d_front = get_dist_mean_front();
+        d_right = get_dist_mean_right();
+
+        //while((abs(d_right - front_dist_mm) > 20)||!is_front_blocked(d_front - epsilon_mm)){
+        while(is_front_blocked(clamp_float(d_front - epsilon_front_mm, 1, INT_MAX)) || !is_wall_detected_right(d_right + epsilon_side_mm)){
+            move_step(0.0f, 0.0f, theta_r_cmd);
+            
+            
+            mes_all_dist();
+            d_right = get_dist_mean_right();
+            d_front = get_dist_mean_front();
+        }
+
+    }else{
+        d_front = get_dist_mean_front();
+        d_left = get_dist_mean_left();
+        
+        while(is_front_blocked(clamp_float(d_front - epsilon_front_mm, 1, INT_MAX)) || !is_wall_detected_left(d_left + epsilon_side_mm)){
+            move_step(0.0f, 0.0f, theta_r_cmd);
+            
+            
+            mes_all_dist();
+            d_left = get_dist_mean_left();
+            d_front = get_dist_mean_front();
+        }
+
     }
 }
 
@@ -71,9 +114,9 @@ void solve_maze(void)
 
     if (is_front_blocked(d_front)){
         if (d_left >= d_right) {
-            perform_turn_90(-1);
+            perform_turn_90(-1, d_front);
         } else {
-            perform_turn_90(1);
+            perform_turn_90(1, d_front);
         }
     }else{
         bool left_wall = is_wall_detected_left(d_left);
