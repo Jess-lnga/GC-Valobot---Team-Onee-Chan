@@ -43,5 +43,6 @@ void draw_target(uint16_t *frame,
                  int height,
                  const target_detection_t *target,
                  uint16_t color);
+void draw_target_roi(uint16_t *frame, int width, int height, uint16_t color);
 
 #endif

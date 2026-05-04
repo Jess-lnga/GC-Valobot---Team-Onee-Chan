@@ -66,7 +66,7 @@ static void core1_entry(void) {
             sleep_ms(1);
         }
 
-        if(gc_valobot_mode == LABYRINTHE_MODE){ // Labyrinthe
+        if(gc_valobot_mode == LABYRINTHE_MODE){
             bool maze_solved = false;
 
             while(!maze_solved){
@@ -77,10 +77,10 @@ static void core1_entry(void) {
                 sleep_ms(5);
             }
 
-            gc_valobot_mode = SHOOTING_TRANSITION_MODE; //Going to the mode for transitionning before shooting
+            gc_valobot_mode = SHOOTING_TRANSITION_MODE; 
         }
 
-        if(gc_valobot_mode == SHOOTING_TRANSITION_MODE){ // Transition before shooting
+        if(gc_valobot_mode == SHOOTING_TRANSITION_MODE){
             sleep_ms(5000);
         }
     }
@@ -101,6 +101,7 @@ static void init_all(void) {
 
     sleep_ms(100);
 
+    //gc_valobot_mode = LINE_FOLLOWING_MODE;
     gc_valobot_mode = SHOOTING_MODE;
     multicore_launch_core1(core1_entry);
 }

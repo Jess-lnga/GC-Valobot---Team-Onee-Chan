@@ -46,6 +46,8 @@ uint16_t *find_targets(uint16_t *frame, int width, int height)
         draw_target(frame, width, height, &g_targets[i], TARGET_COLOR_PURPLE);
     }
 
+    draw_target_roi(frame, width, height, TARGET_COLOR_RED);
+
     return frame;
 }
 
