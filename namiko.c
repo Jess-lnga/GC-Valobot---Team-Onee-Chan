@@ -79,8 +79,7 @@ static void core1_entry(void) {
                 continue;
             }
 
-            imu_angles_t angles;
-            if (!imu_read_angles(&angles)) {
+            if (!imu_capture()) {
                 printf("\033[HIMU read failed                                      ");
                 fflush(stdout);
                 sleep_ms(250);
@@ -88,10 +87,14 @@ static void core1_entry(void) {
             }
 
             printf(
-                "\033[HIMU | pitch=%7.2f deg | roll=%7.2f deg | addr=0x%02X        ",
-                angles.pitch_deg,
-                angles.roll_deg,
-                imu_get_addr()
+                "\033[HIMU inst | pitch=%7.2f deg | roll=%7.2f deg | addr=0x%02X        \n"
+                "IMU mean | pitch=%7.2f deg | roll=%7.2f deg | n=%2d             ",
+                get_instant_pitch(),
+                get_instant_roll(),
+                imu_get_addr(),
+                get_mean_pitch(),
+                get_mean_roll(),
+                IMU_MEAN_WINDOW
             );
             fflush(stdout);
 

@@ -25,6 +25,55 @@
 
 static uint8_t g_imu_addr = IMU_ADDR_LOW;
 static bool g_imu_initialized = false;
+static float g_instant_pitch = 0.0f;
+static float g_instant_roll = 0.0f;
+static float g_mean_pitch = 0.0f;
+static float g_mean_roll = 0.0f;
+static float g_pitch_samples[IMU_MEAN_WINDOW];
+static float g_roll_samples[IMU_MEAN_WINDOW];
+static int g_mean_index = 0;
+static int g_mean_count = 0;
+static float g_pitch_sum = 0.0f;
+static float g_roll_sum = 0.0f;
+
+static void imu_mean_reset(void)
+{
+    g_instant_pitch = 0.0f;
+    g_instant_roll = 0.0f;
+    g_mean_pitch = 0.0f;
+    g_mean_roll = 0.0f;
+    g_mean_index = 0;
+    g_mean_count = 0;
+    g_pitch_sum = 0.0f;
+    g_roll_sum = 0.0f;
+
+    for (int i = 0; i < IMU_MEAN_WINDOW; ++i) {
+        g_pitch_samples[i] = 0.0f;
+        g_roll_samples[i] = 0.0f;
+    }
+}
+
+static void imu_mean_update(float pitch, float roll)
+{
+    if (g_mean_count < IMU_MEAN_WINDOW) {
+        g_pitch_samples[g_mean_index] = pitch;
+        g_roll_samples[g_mean_index] = roll;
+        g_pitch_sum += pitch;
+        g_roll_sum += roll;
+        g_mean_count++;
+    } else {
+        g_pitch_sum -= g_pitch_samples[g_mean_index];
+        g_roll_sum -= g_roll_samples[g_mean_index];
+        g_pitch_samples[g_mean_index] = pitch;
+        g_roll_samples[g_mean_index] = roll;
+        g_pitch_sum += pitch;
+        g_roll_sum += roll;
+    }
+
+    g_mean_index = (g_mean_index + 1) % IMU_MEAN_WINDOW;
+    g_mean_pitch = g_pitch_sum / (float)g_mean_count;
+    g_mean_roll = g_roll_sum / (float)g_mean_count;
+}
 
 static bool imu_write8(uint8_t reg, uint8_t val)
 {
@@ -56,6 +105,7 @@ bool imu_init(void)
 {
     uint8_t who_am_i = 0;
     g_imu_initialized = false;
+    imu_mean_reset();
 
     g_imu_addr = IMU_ADDR_LOW;
     if (!imu_read8(MPU_REG_WHO_AM_I, &who_am_i) || !imu_who_am_i_is_valid(who_am_i)) {
@@ -149,6 +199,39 @@ bool imu_read_angles(imu_angles_t *angles)
     angles->roll_deg = imu_roll_deg_from_accel(&accel);
 
     return true;
+}
+
+bool imu_capture(void)
+{
+    imu_angles_t angles;
+
+    if (!imu_read_angles(&angles)) return false;
+
+    g_instant_pitch = angles.pitch_deg;
+    g_instant_roll = angles.roll_deg;
+    imu_mean_update(g_instant_pitch, g_instant_roll);
+
+    return true;
+}
+
+float get_instant_pitch(void)
+{
+    return g_instant_pitch;
+}
+
+float get_instant_roll(void)
+{
+    return g_instant_roll;
+}
+
+float get_mean_pitch(void)
+{
+    return g_mean_pitch;
+}
+
+float get_mean_roll(void)
+{
+    return g_mean_roll;
 }
 
 uint8_t imu_get_addr(void)
