@@ -16,6 +16,7 @@
 #include "pca9685.h"
 #include "line_following.h"
 #include "tof.h"
+#include "imu.h"
 
 #define LINE_FOLLOWING_MODE         0
 #define RISING_SLOPE_MODE           1
@@ -31,6 +32,7 @@
 
 static volatile bool g_line_following_ready = false;
 static volatile bool g_tof_ready = false;
+static volatile bool g_imu_ready = false;
 
 static bool debug = true;
 
@@ -54,16 +56,6 @@ static void core1_entry(void) {
     init_servo_ctrl();
     wake_up();
 
-    /*
-    for(int i = 0; i < 20; ++i){
-        mes_all_dist();
-        sleep_ms(50);
-    }
-
-    put_in_position();
-
-    */
-
     for(int i = 0; i < 40; ++i){
         mes_all_dist();
         sleep_ms(50);
@@ -78,9 +70,32 @@ static void core1_entry(void) {
         }
 
         if(gc_valobot_mode == RISING_SLOPE_MODE){
-            heavy_gate();
-            //heavy_gate_2(1, 0, 0);
-            sleep_ms(1);
+            //heavy_gate();
+
+            if (!g_imu_ready) {
+                printf("\033[HIMU init failed                                      ");
+                fflush(stdout);
+                sleep_ms(250);
+                continue;
+            }
+
+            imu_angles_t angles;
+            if (!imu_read_angles(&angles)) {
+                printf("\033[HIMU read failed                                      ");
+                fflush(stdout);
+                sleep_ms(250);
+                continue;
+            }
+
+            printf(
+                "\033[HIMU | pitch=%7.2f deg | roll=%7.2f deg | addr=0x%02X        ",
+                angles.pitch_deg,
+                angles.roll_deg,
+                imu_get_addr()
+            );
+            fflush(stdout);
+
+            sleep_ms(50);
         }
 
         if(gc_valobot_mode == LABYRINTHE_MODE){
@@ -115,12 +130,14 @@ static void init_all(void) {
     i2c_init(i2c0, 400 * 1000);
     g_tof_ready = tof_init_all();
     //printf("TOF init: %s\n", g_tof_ready ? "OK" : "FAILED");
+    g_imu_ready = imu_init();
+    //printf("IMU init: %s, addr=0x%02X\n", g_imu_ready ? "OK" : "FAILED", imu_get_addr());
 
     sleep_ms(100);
 
-    gc_valobot_mode = LINE_FOLLOWING_MODE;
+    //gc_valobot_mode = LINE_FOLLOWING_MODE;
     //gc_valobot_mode = SHOOTING_MODE;
-    //gc_valobot_mode = RISING_SLOPE_MODE;
+    gc_valobot_mode = RISING_SLOPE_MODE;
     //gc_valobot_mode = LABYRINTHE_MODE;
     //gc_valobot_mode = REST_MODE;
 
