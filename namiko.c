@@ -27,6 +27,7 @@
 #define SHOOTING_MODE               7
 #define GOING_TO_SPYKE_MODE         8
 #define FINISHING_MODE              9
+#define REST_MODE                   10
 
 static volatile bool g_line_following_ready = false;
 static volatile bool g_tof_ready = false;
@@ -53,6 +54,16 @@ static void core1_entry(void) {
     init_servo_ctrl();
     wake_up();
 
+    /*
+    for(int i = 0; i < 20; ++i){
+        mes_all_dist();
+        sleep_ms(50);
+    }
+
+    put_in_position();
+
+    */
+
     for(int i = 0; i < 40; ++i){
         mes_all_dist();
         sleep_ms(50);
@@ -68,6 +79,7 @@ static void core1_entry(void) {
 
         if(gc_valobot_mode == RISING_SLOPE_MODE){
             heavy_gate();
+            //heavy_gate_2(1, 0, 0);
             sleep_ms(1);
         }
 
@@ -106,9 +118,12 @@ static void init_all(void) {
 
     sleep_ms(100);
 
-    //gc_valobot_mode = LINE_FOLLOWING_MODE;
+    gc_valobot_mode = LINE_FOLLOWING_MODE;
     //gc_valobot_mode = SHOOTING_MODE;
-    gc_valobot_mode = RISING_SLOPE_MODE;
+    //gc_valobot_mode = RISING_SLOPE_MODE;
+    //gc_valobot_mode = LABYRINTHE_MODE;
+    //gc_valobot_mode = REST_MODE;
+
     multicore_launch_core1(core1_entry);
 }
 

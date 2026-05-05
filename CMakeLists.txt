@@ -49,6 +49,7 @@ add_executable(onee_chan
     frame_find_target_helpers.c
     labyrinthe.c
     line_following.c
+    imu.c
     tof.c
 )
 

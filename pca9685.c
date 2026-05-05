@@ -18,13 +18,15 @@
 
 #define COXA_FL 11
 #define COXA_FR 4
-#define COXA_BL 9
+#define COXA_BL 2
 #define COXA_BR 7
  
 #define TROC_FL 10
 #define TROC_FR 6
 #define TROC_BL 8
 #define TROC_BR 5
+
+#define HEAD_SERVO 3
 
 #define INVALID_CHANNEL -1
 
@@ -971,9 +973,10 @@ void heavy_gate(){
     float start_usfl, stop_usfl, slope_usfl;
     float start_usbl, stop_usbl, slope_usbl;
 
-    int floor_step = 25; // Fast value: 18
+    int floor_step = 70; // Fast value: 18
+    int up_value_ms = 1600; // Normal value = 1500
 
-    for (int us = 1500; us <= 2000; us += 10) {               //Rise the legs
+    for (int us = up_value_ms; us <= 2000; us += 10) {               //Rise the legs
         pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
         pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
         pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
@@ -1019,7 +1022,7 @@ void heavy_gate(){
     }
 
 
-    for (int us = 2000; us >= 1500; us -= 10) {               //Get the legs down
+    for (int us = 2000; us >= up_value_ms; us -= 10) {               //Get the legs down
         pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
         pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
         pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
@@ -1061,6 +1064,294 @@ void heavy_gate(){
         mes_all_dist();
         sleep_ms(9); 
     }
+}
+
+void put_in_position(){
+    for (int us = 1500; us >= 1200; us -= 10) {               
+        pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
+        pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
+        
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9); 
+    }
+}
+
+
+void heavy_gate_2(float D, float theta_t, float theta_r){
+   // -------------- GENERAL COMPUTATION FOR MOVEMENT -------------- //
+    // Theta_t and Theta_r are in radians, D is in cm
+    int ticks_min = 1000;
+    int ticks_max = 3000 - ticks_min;
+    int ticks_middle = 1500;
+
+    float angle_deg_max = 45; // Previously 34
+
+    float angle_rad_max = (angle_deg_max*M_PI)/180;
+    float slope = (ticks_max - ticks_middle)/angle_rad_max;
+
+    float d_l = D*sin(M_PI/4.0 - theta_t);
+    float d_r = D*cos(M_PI/4.0 - theta_t);
+
+   //------- Compute mouvement for right diagonal -------//
+    float theta_1r = asin((2*d_r + LEG_L*sin(theta_r))/(2*LEG_R)) + theta_r;
+    float theta_2r = asin((2*d_r - LEG_L*sin(theta_r))/(2*LEG_R)) - theta_r;
+    
+    // --> Conversion for digitalisation
+    float digit_theta_1r = 1500 - slope * theta_1r; // For COXA_FL
+    float digit_theta_2r = 1500 + slope * theta_2r; // For COXA_BR
+
+    float _digit_theta_1r = 1500 - slope * (-1 * theta_1r); // For COXA_FL   --> Because we have a symetrical mvmnt
+    float _digit_theta_2r = 1500 + slope * (-1 * theta_2r); // For COXA_BR
+
+    if(digit_theta_1r > ticks_max){digit_theta_1r = ticks_max;}
+    if(digit_theta_1r < ticks_min){digit_theta_1r = ticks_min;}
+    if(digit_theta_2r > ticks_max){digit_theta_2r = ticks_max;}
+    if(digit_theta_2r < ticks_min){digit_theta_2r = ticks_min;}
+
+    if(_digit_theta_1r > ticks_max){_digit_theta_1r = ticks_max;}
+    if(_digit_theta_1r < ticks_min){_digit_theta_1r = ticks_min;}
+    if(_digit_theta_2r > ticks_max){_digit_theta_2r = ticks_max;}
+    if(_digit_theta_2r < ticks_min){_digit_theta_2r = ticks_min;}
+
+
+    //------- Compute mouvement for left diagonal -------//
+    float theta_1l = asin((2*d_l + LEG_L*sin(theta_r))/(2*LEG_R)) + theta_r;
+    float theta_2l = asin((2*d_l - LEG_L*sin(theta_r))/(2*LEG_R)) - theta_r;
+    
+    // --> Conversion for digitalisation
+    float digit_theta_1l = 1500 - slope * theta_1l; // For COXA_BL
+    float digit_theta_2l = 1500 + slope * theta_2l; // For COXA_FR
+
+    float _digit_theta_1l = 1500 - slope * (-1 * theta_1l); // For COXA_BL
+    float _digit_theta_2l = 1500 + slope * (-1 * theta_2l); // For COXA_FR
+
+    if(digit_theta_1l > ticks_max){digit_theta_1l = ticks_max;}
+    if(digit_theta_1l < ticks_min){digit_theta_1l = ticks_min;}
+    if(digit_theta_2l > ticks_max){digit_theta_2l = ticks_max;}
+    if(digit_theta_2l < ticks_min){digit_theta_2l = ticks_min;}
+
+    if(_digit_theta_1l > ticks_max){_digit_theta_1l = ticks_max;}
+    if(_digit_theta_1l < ticks_min){_digit_theta_1l = ticks_min;}
+    if(_digit_theta_2l > ticks_max){_digit_theta_2l = ticks_max;}
+    if(_digit_theta_2l < ticks_min){_digit_theta_2l = ticks_min;}
+
+
+    //------- Mouvement parameters -------//
+    int air_step   = 22;   // Good values: air --> 25; floor --> 15
+    int floor_step = 18;   // Good values: air --> 22; floor --> 18
+
+    int step = air_step;
+
+    int min = 1200;
+    int max = 2000; // Normal = 2000
+    int middle = 1500;
+    int offset = -500;
+
+
+    //------- Compute mouvement according to FSM -------//
+    // ------ Left side ------ //
+
+    if(_state == RISE_LEFT_TROC){
+        for (int us = middle; us <= max; us += air_step) {               //Rise the legs
+            pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_BL, 0, to_ticks_us(us + offset, us_par_tick)); 
+            
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+            
+        }
+
+
+        _moved_side = LEFT_SIDE;
+        _state = FORWARD_LEFT_COXA;
+        return;
+    }
+
+    if(_state == FORWARD_LEFT_COXA){
+        //float start_us1l = _digit_theta_1l;
+        float start_us1l = servo_angle_us[COXA_BL];
+        float stop_us1l  = digit_theta_1l;
+        float slope_us1l = (stop_us1l - start_us1l);
+        
+        //float start_us2l = _digit_theta_2l;
+        float start_us2l = servo_angle_us[COXA_FR];
+        float stop_us2l  = digit_theta_2l;
+        float slope_us2l = (stop_us2l - start_us2l);
+
+        for (int i = 0; i <= floor_step;  ++i){
+
+            int us1l = start_us1l + i*slope_us1l/(floor_step*1.0);
+            int us2l = start_us2l + i*slope_us2l/(floor_step*1.0);
+
+            pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
+            pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
+
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+        }
+
+
+        _moved_side = LEFT_SIDE;
+        _state = FALL_LEFT_TROC;
+    }
+
+    if(_state == FALL_LEFT_TROC){
+        for (int us = max; us >= middle; us -= air_step) {              //Get the legs down
+            pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_BL, 0, to_ticks_us(us + offset, us_par_tick));  
+
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+        }
+        
+        _moved_side = LEFT_SIDE;
+        _state = MOVE_ALL_LEGS_DOWN;
+    }
+
+    // ------ Right side ------ //
+
+    if(_state == RISE_RIGHT_TROC){
+        for (int us = middle; us <= max; us += air_step) {               //Rise the legs
+            pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_BR, 0, to_ticks_us(us + offset, us_par_tick)); 
+            
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+        }
+
+        _moved_side = RIGHT_SIDE;
+        _state = FORWARD_RIGHT_COXA;
+        return;
+    }
+
+    if(_state == FORWARD_RIGHT_COXA){
+        //float start_us1r = _digit_theta_1r;
+        float start_us1r = servo_angle_us[COXA_FL];
+        float stop_us1r  = digit_theta_1r;
+        float slope_us1r = (stop_us1r - start_us1r);
+        
+        //float start_us2r = _digit_theta_2r;
+        float start_us2r = servo_angle_us[COXA_BR];
+        float stop_us2r  = digit_theta_2r;
+        float slope_us2r = (stop_us2r - start_us2r);
+
+
+        for (int i = 0; i <= floor_step;  ++i){ 
+        
+            int us1r = start_us1r + i*slope_us1r/(floor_step*1.0);
+            int us2r = start_us2r + i*slope_us2r/(floor_step*1.0);
+
+            pca_write_pwm(COXA_FL, 0, to_ticks_us(us1r, us_par_tick));
+            pca_write_pwm(COXA_BR, 0, to_ticks_us(us2r, us_par_tick));  
+
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+        }
+        
+        _moved_side = RIGHT_SIDE;
+        _state = FALL_RIGHT_TROC;
+    }
+
+    if(_state == FALL_RIGHT_TROC){
+        for (int us = max; us >= middle; us -= air_step) {              //Get the legs down
+            pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
+            pca_write_pwm(TROC_BR, 0, to_ticks_us(us + offset, us_par_tick));  
+            
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+        }
+        
+        _moved_side = RIGHT_SIDE;
+        _state = MOVE_ALL_LEGS_DOWN;
+    }
+
+    // ------ Both sides down ------ //
+    if(_state == MOVE_ALL_LEGS_DOWN){
+
+        float start_us1r, stop_us1r, slope_us1r;
+        float start_us2r, stop_us2r, slope_us2r;
+
+        float start_us1l, stop_us1l, slope_us1l;
+        float start_us2l, stop_us2l, slope_us2l;
+
+        if(_moved_side == LEFT_SIDE){
+            start_us1r = servo_angle_us[COXA_FL];
+            stop_us1r  = _digit_theta_1r;
+            slope_us1r = (stop_us1r - start_us1r);
+            
+            start_us2r = servo_angle_us[COXA_BR];
+            stop_us2r  = _digit_theta_2r;
+            slope_us2r = (stop_us2r - start_us2r);
+            
+            ////
+
+            start_us1l = servo_angle_us[COXA_BL];
+            stop_us1l  = 1500;
+            slope_us1l = (stop_us1l - start_us1l);
+            
+            start_us2l = servo_angle_us[COXA_FR];
+            stop_us2l  = 1500;
+            slope_us2l = (stop_us2l - start_us2l);
+
+        }else{
+            start_us1r = servo_angle_us[COXA_FL];
+            stop_us1r  = 1500;
+            slope_us1r = (stop_us1r - start_us1r);
+            
+            start_us2r = servo_angle_us[COXA_BR];
+            stop_us2r  = 1500;
+            slope_us2r = (stop_us2r - start_us2r);
+            
+            ////
+
+            start_us1l = servo_angle_us[COXA_BL];
+            stop_us1l  = _digit_theta_1l;
+            slope_us1l = (stop_us1l - start_us1l);
+            
+            start_us2l = servo_angle_us[COXA_FR];
+            stop_us2l  = _digit_theta_2l;
+            slope_us2l = (stop_us2l - start_us2l);
+        }
+
+
+        for (int i = 0; i <= floor_step;  ++i){ 
+
+            int us1r = start_us1r + i*slope_us1r/(floor_step*1.0);
+            int us2r = start_us2r + i*slope_us2r/(floor_step*1.0);
+
+            int us1l = start_us1l + i*slope_us1l/(floor_step*1.0);
+            int us2l = start_us2l + i*slope_us2l/(floor_step*1.0);
+
+            pca_write_pwm(COXA_FL, 0, to_ticks_us(us1r, us_par_tick));
+            pca_write_pwm(COXA_BR, 0, to_ticks_us(us2r, us_par_tick));
+
+            pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
+            pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
+
+            sleep_ms(1);
+            mes_all_dist();
+            sleep_ms(9);
+
+        }
+
+
+        if(_moved_side == LEFT_SIDE){
+            _state = RISE_RIGHT_TROC;
+            _moved_side = RIGHT_SIDE;
+        }else{
+            _state = RISE_LEFT_TROC;
+            _moved_side = LEFT_SIDE;
+        } 
+        
+        return;
+    } 
 }
 
 void turn_without_moving(int angle_us){
