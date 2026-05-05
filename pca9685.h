@@ -21,6 +21,8 @@ void demo(int mode );
 void move(float D, float theta_t, float theta_r);
 void move_2(float D, float theta_t, float theta_r);
 void move_step(float D, float theta_t, float theta_r);
+
+void heavy_gate();
 void turn_without_moving(int angle_us);
 void recenter(int previous_angle_us);
 void wake_up();

@@ -965,6 +965,104 @@ void move_step(float D, float theta_t, float theta_r){
     }
 }
 
+void heavy_gate(){
+    float start_usfr, stop_usfr, slope_usfr;
+    float start_usbr, stop_usbr, slope_usbr;
+    float start_usfl, stop_usfl, slope_usfl;
+    float start_usbl, stop_usbl, slope_usbl;
+
+    int floor_step = 25; // Fast value: 18
+
+    for (int us = 1500; us <= 2000; us += 10) {               //Rise the legs
+        pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
+        pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
+        pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
+        pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick)); 
+        
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9); 
+    }
+
+    
+    start_usbr = servo_angle_us[COXA_BR]; //1500
+    stop_usbr = 1900;
+    slope_usbr = (stop_usbr - start_usbr);
+
+    start_usbl = servo_angle_us[COXA_BL]; //1500
+    stop_usbl = 1100;
+    slope_usbl = (stop_usbl - start_usbl);  
+
+    start_usfl = servo_angle_us[COXA_FL]; //
+    stop_usfl = 1500;
+    slope_usfl = (stop_usfl - start_usfl);
+
+    start_usfr = servo_angle_us[COXA_FR]; //1500
+    stop_usfr = 1500;
+    slope_usfr = (stop_usfr - start_usfr);
+
+    for (int i = 0; i <= floor_step;  ++i){   // Legs forward
+
+        int usfl = start_usfl + i*slope_usfl/(floor_step*1.0);
+        int usbl = start_usbl + i*slope_usbl/(floor_step*1.0);
+        int usbr = start_usbr + i*slope_usbr/(floor_step*1.0);
+        int usfr = start_usfr + i*slope_usfr/(floor_step*1.0);
+
+        pca_write_pwm(COXA_FL, 0, to_ticks_us(usfl, us_par_tick));
+        pca_write_pwm(COXA_BL, 0, to_ticks_us(usbl, us_par_tick));
+        pca_write_pwm(COXA_FR, 0, to_ticks_us(usfr, us_par_tick));
+        pca_write_pwm(COXA_BR, 0, to_ticks_us(usbr, us_par_tick));
+
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9);
+    }
+
+
+    for (int us = 2000; us >= 1500; us -= 10) {               //Get the legs down
+        pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
+        pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
+        pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
+        pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick)); 
+        
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9); 
+    }
+
+    start_usbr = servo_angle_us[COXA_BR]; 
+    stop_usbr = 1500;
+    slope_usbr = (stop_usbr - start_usbr);
+
+    start_usbl = servo_angle_us[COXA_BL]; //1500
+    stop_usbl = 1500;
+    slope_usbl = (stop_usbl - start_usbl); 
+
+    start_usfl = servo_angle_us[COXA_FL]; 
+    stop_usfl = 1900;
+    slope_usfl = (stop_usfl - start_usfl);
+
+    start_usfr = servo_angle_us[COXA_FR]; //1500
+    stop_usfr = 1100;
+    slope_usfr = (stop_usfr - start_usfr);
+
+    for(int i = 0; i <= floor_step;  ++i) {   // Legs back in neutral position           
+        int usfl = start_usfl + i*slope_usfl/(floor_step*1.0);
+        int usbl = start_usbl + i*slope_usbl/(floor_step*1.0);
+        int usbr = start_usbr + i*slope_usbr/(floor_step*1.0);
+        int usfr = start_usfr + i*slope_usfr/(floor_step*1.0);
+
+        pca_write_pwm(COXA_FL, 0, to_ticks_us(usfl, us_par_tick));
+        pca_write_pwm(COXA_BL, 0, to_ticks_us(usbl, us_par_tick));
+        pca_write_pwm(COXA_FR, 0, to_ticks_us(usfr, us_par_tick));
+        pca_write_pwm(COXA_BR, 0, to_ticks_us(usbr, us_par_tick)); 
+        
+        sleep_ms(1);
+        mes_all_dist();
+        sleep_ms(9); 
+    }
+}
+
 void turn_without_moving(int angle_us){
     if(angle_us >= 1800){ angle_us = 1800; }
     if(angle_us <= 1200){ angle_us = 1200; }
@@ -1068,9 +1166,6 @@ int channel_selection(char *cmd){
         return INVALID_CHANNEL;
     }   
 }
-
-
-
 
 void demo(int mode){
     if(mode == 0){ //Mini demo up down and quick look around!

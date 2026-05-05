@@ -23,9 +23,16 @@
 #define TARGET_ROI_BOTTOM_NUM         1
 #define TARGET_ROI_BOTTOM_DEN         2
 
-#define MIN_BLUE_SEGMENT_WIDTH        4
+#define MIN_BLUE_SEGMENT_WIDTH_MIN    6
+#define MIN_BLUE_SEGMENT_WIDTH_NUM    1
+#define MIN_BLUE_SEGMENT_WIDTH_DEN   15
+#define MAX_BLUE_SEGMENT_WIDTH_NUM    7
+#define MAX_BLUE_SEGMENT_WIDTH_DEN   20
 #define MAX_NON_BLUE_GAP_IN_SEGMENT   2
 #define MAX_SEGMENTS_PER_ROW         12
+#define MAX_VERTICAL_SEGMENT_GAP      4
+#define VERTICAL_SEGMENT_CENTER_JUMP 12
+#define TARGET_MAX_ROTATED_ROWS     180
 
 #define MAX_ACTIVE_TARGETS           FRAME_FIND_TARGET_MAX_TARGETS
 #define MAX_TARGET_CENTER_JUMP       12
@@ -60,6 +67,7 @@ typedef struct {
 
 static void compute_target_roi(int height, int *roi_top, int *roi_bottom);
 static void clean_blue_rows_in_roi(uint16_t *frame, int width, int height);
+static void filter_lonely_vertical_segments_in_roi(uint16_t *frame, int width, int height);
 
 static inline int rotm90_xo(int xv, int yv)
 {
@@ -128,6 +136,23 @@ static int overlap_len(int a0, int a1, int b0, int b1)
     }
 
     return end - start + 1;
+}
+
+static void compute_blue_segment_width_limits(int rotated_width, int *min_width, int *max_width)
+{
+    int min_w = (rotated_width * MIN_BLUE_SEGMENT_WIDTH_NUM) / MIN_BLUE_SEGMENT_WIDTH_DEN;
+    int max_w = (rotated_width * MAX_BLUE_SEGMENT_WIDTH_NUM) / MAX_BLUE_SEGMENT_WIDTH_DEN;
+
+    if (min_w < MIN_BLUE_SEGMENT_WIDTH_MIN) {
+        min_w = MIN_BLUE_SEGMENT_WIDTH_MIN;
+    }
+
+    if (max_w < min_w) {
+        max_w = min_w;
+    }
+
+    *min_width = min_w;
+    *max_width = max_w;
 }
 
 static void compute_target_roi(int height, int *roi_top, int *roi_bottom)
@@ -260,6 +285,7 @@ void filter_blue_pxl(uint16_t *frame, int width, int height)
     }
 
     clean_blue_rows_in_roi(frame, width, height);
+    filter_lonely_vertical_segments_in_roi(frame, width, height);
 }
 
 static void register_segment(target_row_segment_t *segments,
@@ -293,6 +319,8 @@ int find_blue_segments_in_row(const uint16_t *frame,
     int segment_count = 0;
     const int rotated_width = height;
     const int rotated_height = width;
+    int min_segment_width;
+    int max_segment_width;
 
     if (!frame || !segments || row < 0 || row >= rotated_height || max_segments <= 0) {
         return 0;
@@ -301,6 +329,8 @@ int find_blue_segments_in_row(const uint16_t *frame,
     if (max_segments > MAX_SEGMENTS_PER_ROW) {
         max_segments = MAX_SEGMENTS_PER_ROW;
     }
+
+    compute_blue_segment_width_limits(rotated_width, &min_segment_width, &max_segment_width);
 
     for (int x = 0; x < rotated_width; ++x) {
         const bool is_blue = (get_px_rotm90(frame, width, height, x, row) == TARGET_COLOR_BLUE);
@@ -326,7 +356,9 @@ int find_blue_segments_in_row(const uint16_t *frame,
 
         if (last_blue_x >= segment_start) {
             const int segment_width = last_blue_x - segment_start + 1;
-            if (segment_width >= MIN_BLUE_SEGMENT_WIDTH && segment_count < max_segments) {
+            if (segment_width >= min_segment_width &&
+                segment_width <= max_segment_width &&
+                segment_count < max_segments) {
                 register_segment(segments, &segment_count, row, segment_start, last_blue_x);
             }
         }
@@ -338,7 +370,9 @@ int find_blue_segments_in_row(const uint16_t *frame,
 
     if (segment_start >= 0 && last_blue_x >= segment_start) {
         const int segment_width = last_blue_x - segment_start + 1;
-        if (segment_width >= MIN_BLUE_SEGMENT_WIDTH && segment_count < max_segments) {
+        if (segment_width >= min_segment_width &&
+            segment_width <= max_segment_width &&
+            segment_count < max_segments) {
             register_segment(segments, &segment_count, row, segment_start, last_blue_x);
         }
     }
@@ -370,6 +404,93 @@ static void clean_blue_rows_in_roi(uint16_t *frame, int width, int height)
 
         for (int i = 0; i < segment_count; ++i) {
             for (int x = segments[i].start_x; x <= segments[i].end_x; ++x) {
+                set_px_rotm90(frame, width, height, x, row, TARGET_COLOR_BLUE);
+            }
+        }
+    }
+}
+
+static bool segments_are_vertically_linked(const target_row_segment_t *a,
+                                           const target_row_segment_t *b)
+{
+    const int x_overlap = overlap_len(a->start_x, a->end_x, b->start_x, b->end_x);
+    const int dx = iabs_int(a->center_x - b->center_x);
+
+    return (x_overlap > 0) || (dx <= VERTICAL_SEGMENT_CENTER_JUMP);
+}
+
+static bool segment_has_vertical_neighbor(int row_index,
+                                          int segment_index,
+                                          const target_row_segment_t row_segments[][MAX_SEGMENTS_PER_ROW],
+                                          const uint8_t *row_segment_counts,
+                                          int roi_top,
+                                          int roi_bottom)
+{
+    const target_row_segment_t *segment = &row_segments[row_index][segment_index];
+    const int min_row = max_int(roi_top, row_index - MAX_VERTICAL_SEGMENT_GAP);
+    const int max_row = min_int(roi_bottom, row_index + MAX_VERTICAL_SEGMENT_GAP);
+
+    for (int row = min_row; row <= max_row; ++row) {
+        if (row == row_index) {
+            continue;
+        }
+
+        for (int i = 0; i < row_segment_counts[row]; ++i) {
+            if (segments_are_vertically_linked(segment, &row_segments[row][i])) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static void filter_lonely_vertical_segments_in_roi(uint16_t *frame, int width, int height)
+{
+    static target_row_segment_t row_segments[TARGET_MAX_ROTATED_ROWS][MAX_SEGMENTS_PER_ROW];
+    static uint8_t row_segment_counts[TARGET_MAX_ROTATED_ROWS];
+    const int rotated_width = height;
+    const int rotated_height = width;
+    int roi_top;
+    int roi_bottom;
+
+    if (rotated_height > TARGET_MAX_ROTATED_ROWS) {
+        return;
+    }
+
+    compute_target_roi(rotated_height, &roi_top, &roi_bottom);
+
+    for (int row = 0; row < rotated_height; ++row) {
+        row_segment_counts[row] = 0;
+    }
+
+    for (int row = roi_top; row <= roi_bottom; ++row) {
+        row_segment_counts[row] = (uint8_t)find_blue_segments_in_row(frame,
+                                                                     width,
+                                                                     height,
+                                                                     row,
+                                                                     row_segments[row],
+                                                                     MAX_SEGMENTS_PER_ROW);
+    }
+
+    for (int row = roi_top; row <= roi_bottom; ++row) {
+        for (int x = 0; x < rotated_width; ++x) {
+            set_px_rotm90(frame, width, height, x, row, TARGET_COLOR_WHITE);
+        }
+    }
+
+    for (int row = roi_top; row <= roi_bottom; ++row) {
+        for (int i = 0; i < row_segment_counts[row]; ++i) {
+            if (!segment_has_vertical_neighbor(row,
+                                               i,
+                                               row_segments,
+                                               row_segment_counts,
+                                               roi_top,
+                                               roi_bottom)) {
+                continue;
+            }
+
+            for (int x = row_segments[row][i].start_x; x <= row_segments[row][i].end_x; ++x) {
                 set_px_rotm90(frame, width, height, x, row, TARGET_COLOR_BLUE);
             }
         }

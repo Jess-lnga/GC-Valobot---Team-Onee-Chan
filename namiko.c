@@ -66,6 +66,11 @@ static void core1_entry(void) {
             sleep_ms(1);
         }
 
+        if(gc_valobot_mode == RISING_SLOPE_MODE){
+            heavy_gate();
+            sleep_ms(1);
+        }
+
         if(gc_valobot_mode == LABYRINTHE_MODE){
             bool maze_solved = false;
 
@@ -102,7 +107,8 @@ static void init_all(void) {
     sleep_ms(100);
 
     //gc_valobot_mode = LINE_FOLLOWING_MODE;
-    gc_valobot_mode = SHOOTING_MODE;
+    //gc_valobot_mode = SHOOTING_MODE;
+    gc_valobot_mode = RISING_SLOPE_MODE;
     multicore_launch_core1(core1_entry);
 }
 
