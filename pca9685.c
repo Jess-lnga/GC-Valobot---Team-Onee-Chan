@@ -47,12 +47,19 @@ static int servo_angle_us[16] = {0};
 #define FORWARD_RIGHT_COXA  5
 #define MOVE_ALL_LEGS_DOWN  6
 
-#define LEFT_SIDE 0
-#define RIGHT_SIDE 1
+#define LEFT_SIDE           0
+#define RIGHT_SIDE          1
+
+#define HEAD_POS_US_0       2000
+#define HEAD_POS_US_1       1800
+#define HEAD_POS_US_2       1600
+#define HEAD_POS_US_3       1400
 
 
 static int _state = RISE_LEFT_TROC;
 static int _moved_side = LEFT_SIDE; // -1 = none, 0 = left, 1 = right
+
+
 
 // ------------------------------------------------ //
 //bool debug = false;
@@ -727,14 +734,42 @@ void raise_head(){
         sleep_ms(10);
     }
 }
+    
+void look_down(int level){
+    float start_us, stop_us, slope_us;
+    start_us = servo_angle_us[HEAD_SERVO];
 
-void look_down(){
-    for(int us = HEAD_MIN_TICKS; us <= HEAD_MAX_TICKS; us += 10) {             
+    switch(level){
+        case 0:
+            stop_us = HEAD_POS_US_0;  
+            break;
+        case 1:
+            stop_us = HEAD_POS_US_1;
+            break;
+        case 2:
+            stop_us = HEAD_POS_US_2;
+            break;
+        
+        case 3:
+            stop_us = HEAD_POS_US_3;
+            break;
+
+        default:
+            stop_us = HEAD_POS_US_0;  
+             break; 
+    }
+
+    slope_us = (stop_us - start_us);
+
+    int steps = 20;
+    for(int i = 0; i <= steps;  ++i){ 
+
+        int us = start_us + i*slope_us/(steps*1.0);
+
         set_head_pos(us);
         sleep_ms(10);
     }
 }
-
 
 void move_step(float D, float theta_t, float theta_r){
 
@@ -1132,7 +1167,6 @@ void put_in_position(){
         sleep_ms(9); 
     }
 }
-
 
 void heavy_gate_2(float D, float theta_t, float theta_r){
    // -------------- GENERAL COMPUTATION FOR MOVEMENT -------------- //

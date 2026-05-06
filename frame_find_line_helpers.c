@@ -18,6 +18,12 @@
 #define CONTROL_BAND_HEIGHT           24
 #define MAX_SEGMENTS_PER_ROW           8
 #define MAX_ROW_CENTER_JUMP          24
+#define T_SHAPE_MIN_WIDTH_RATIO_NUM    1
+#define T_SHAPE_MIN_WIDTH_RATIO_DEN    2
+#define T_SHAPE_MIN_ABSOLUTE_WIDTH    40
+#define T_SHAPE_MIN_ROW_BLACK_RATIO_NUM 2
+#define T_SHAPE_MIN_ROW_BLACK_RATIO_DEN 3
+#define T_SHAPE_MIN_THICKNESS          4
 
 typedef struct {
     int start_x;
@@ -324,6 +330,165 @@ void draw_control_point(uint16_t *frame, int width, int height, int center_x, in
     }
     if (center_y + 1 < width) {
         set_px_rotm90(frame, width, height, center_x, center_y + 1, color);
+    }
+}
+
+t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
+{
+    const int rotated_width = height;
+    const int rotated_height = width;
+    const int min_wide_span = clamp_int((rotated_width * T_SHAPE_MIN_WIDTH_RATIO_NUM)
+                                      / T_SHAPE_MIN_WIDTH_RATIO_DEN,
+                                      T_SHAPE_MIN_ABSOLUTE_WIDTH,
+                                      rotated_width);
+    t_shape_detection_t best = { false, -1, -1, 0, 0 };
+
+    int run_start_row = -1;
+    int run_end_row = -1;
+    int run_min_x = rotated_width;
+    int run_max_x = -1;
+    int run_sum_center_x = 0;
+    int run_row_count = 0;
+
+    for (int row = 0; row < rotated_height; ++row) {
+        int first_black_x = -1;
+        int last_black_x = -1;
+        int black_count = 0;
+
+        for (int col = 0; col < rotated_width; ++col) {
+            if (get_px_rotm90(frame, width, height, col, row) != COLOR_BLACK) {
+                continue;
+            }
+
+            if (first_black_x < 0) {
+                first_black_x = col;
+            }
+            last_black_x = col;
+            black_count++;
+        }
+
+        const int span_width = (first_black_x >= 0) ? (last_black_x - first_black_x + 1) : 0;
+        const bool is_wide_black_row =
+            (span_width >= min_wide_span) &&
+            (black_count * T_SHAPE_MIN_ROW_BLACK_RATIO_DEN >=
+             span_width * T_SHAPE_MIN_ROW_BLACK_RATIO_NUM);
+
+        if (is_wide_black_row) {
+            const int center_x = (first_black_x + last_black_x) / 2;
+
+            if (run_start_row < 0) {
+                run_start_row = row;
+                run_min_x = first_black_x;
+                run_max_x = last_black_x;
+                run_sum_center_x = 0;
+                run_row_count = 0;
+            }
+
+            run_end_row = row;
+            if (first_black_x < run_min_x) run_min_x = first_black_x;
+            if (last_black_x > run_max_x) run_max_x = last_black_x;
+            run_sum_center_x += center_x;
+            run_row_count++;
+            continue;
+        }
+
+        if (run_row_count >= T_SHAPE_MIN_THICKNESS &&
+            (!best.found || run_row_count > best.thickness)) {
+            best.found = true;
+            best.center_x = (run_sum_center_x + run_row_count / 2) / run_row_count;
+            best.center_y = (run_start_row + run_end_row) / 2;
+            best.width = run_max_x - run_min_x + 1;
+            best.thickness = run_row_count;
+        }
+
+        run_start_row = -1;
+        run_end_row = -1;
+        run_min_x = rotated_width;
+        run_max_x = -1;
+        run_sum_center_x = 0;
+        run_row_count = 0;
+    }
+
+    if (run_row_count >= T_SHAPE_MIN_THICKNESS &&
+        (!best.found || run_row_count > best.thickness)) {
+        best.found = true;
+        best.center_x = (run_sum_center_x + run_row_count / 2) / run_row_count;
+        best.center_y = (run_start_row + run_end_row) / 2;
+        best.width = run_max_x - run_min_x + 1;
+        best.thickness = run_row_count;
+    }
+
+    return best;
+}
+
+void draw_t_shape_marker(uint16_t *frame, int width, int height, t_shape_detection_t t_shape, uint16_t color)
+{
+    if (!t_shape.found) {
+        return;
+    }
+
+    const int rotated_width = height;
+    const int rotated_height = width;
+    const int half_bar = 8;
+    const int stem_len = 12;
+    const int x0 = clamp_int(t_shape.center_x, 0, rotated_width - 1);
+    const int y0 = clamp_int(t_shape.center_y, 0, rotated_height - 1);
+
+    for (int dx = -half_bar; dx <= half_bar; ++dx) {
+        const int x = x0 + dx;
+        if (x >= 0 && x < rotated_width) {
+            set_px_rotm90(frame, width, height, x, y0, color);
+            if (y0 + 1 < rotated_height) {
+                set_px_rotm90(frame, width, height, x, y0 + 1, color);
+            }
+        }
+    }
+
+    for (int dy = 0; dy <= stem_len; ++dy) {
+        const int y = y0 + dy;
+        if (y >= 0 && y < rotated_height) {
+            set_px_rotm90(frame, width, height, x0, y, color);
+            if (x0 + 1 < rotated_width) {
+                set_px_rotm90(frame, width, height, x0 + 1, y, color);
+            }
+        }
+    }
+}
+
+void draw_elbow_marker(uint16_t *frame,
+                       int width,
+                       int height,
+                       int center_x,
+                       int center_y,
+                       int direction,
+                       uint16_t color)
+{
+    const int rotated_width = height;
+    const int rotated_height = width;
+    const int x0 = clamp_int(center_x, 0, rotated_width - 1);
+    const int y0 = clamp_int(center_y, 0, rotated_height - 1);
+    const int dir = (direction < 0) ? -1 : 1;
+    const int branch_len = 16;
+    const int stem_len = 12;
+
+    for (int dy = 0; dy <= stem_len; ++dy) {
+        const int y = y0 + dy;
+        if (y >= 0 && y < rotated_height) {
+            set_px_rotm90(frame, width, height, x0, y, color);
+            if (x0 + 1 < rotated_width) {
+                set_px_rotm90(frame, width, height, x0 + 1, y, color);
+            }
+        }
+    }
+
+    for (int dx = 0; dx <= branch_len; ++dx) {
+        const int x = x0 + dir * dx;
+        if (x >= 0 && x < rotated_width) {
+            set_px_rotm90(frame, width, height, x, y0, color);
+            if (y0 + 1 < rotated_height) {
+                set_px_rotm90(frame, width, height, x, y0 + 1, color);
+            }
+        }
     }
 }
 

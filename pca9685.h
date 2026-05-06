@@ -13,6 +13,10 @@
 #include <string.h>
 
 
+#define HEAD_LEVEL_0 0
+#define HEAD_LEVEL_1 1
+#define HEAD_LEVEL_2 2
+#define HEAD_LEVEL_3 3
 
 
 //bool debug = false;
@@ -29,7 +33,8 @@ void heavy_gate_2(float D, float theta_t, float theta_r);
 
 void nod_head();
 void raise_head();
-void look_down();
+
+void look_down(int level);
 
 void turn_without_moving(int angle_us);
 void recenter(int previous_angle_us);

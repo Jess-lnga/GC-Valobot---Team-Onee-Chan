@@ -53,7 +53,10 @@ static int gc_valobot_mode = LINE_FOLLOWING_MODE;
 9 = finishing 
 */  
 
-bool line_following_init = true;
+static bool ready_to_use_cam = false;
+static bool line_following_init = true;
+
+
 
 
 #define RISING_SLOPE_COUNT_THRESHOLD 5
@@ -66,11 +69,17 @@ static void core1_entry(void) {
     wake_up();
     raise_head();
 
+    sleep_ms(1000);
+    
+    look_down(HEAD_LEVEL_2);
+
     for(int i = 0; i < 40; ++i){
         mes_all_dist();
         imu_capture();
         sleep_ms(50);
     }
+
+    ready_to_use_cam = true;
 
     ///////////////////////////////////////////////////////
     while(true){
@@ -78,7 +87,7 @@ static void core1_entry(void) {
         if(gc_valobot_mode == LINE_FOLLOWING_MODE){
             
             if(line_following_init){
-                look_down();
+                look_down(HEAD_LEVEL_2);
                 line_following_init = false;
                 sleep_ms(1000);
             }
@@ -108,15 +117,28 @@ static void core1_entry(void) {
         }
 
         if(gc_valobot_mode == MIDDLE_SLOPE_MODE){
-        
+            sleep_ms(5000);
+    
         }
 
         if(gc_valobot_mode == FALLING_SLOPE_MODE){
+            sleep_ms(5000);
     
         }
 
         if(gc_valobot_mode == LABYRINTHE_TRANSITION_MODE){
-    
+            bool labyrinthe_transition_done = false;
+            
+            while(!labyrinthe_transition_done){
+                labyrinthe_transition_done = follow_line_step();
+                
+                mes_all_dist();
+                sleep_ms(1);
+            }
+
+            raise_head();
+            //gc_valobot_mode = LABYRINTHE_MODE;
+            gc_valobot_mode = REST_MODE;
         }
 
         if(gc_valobot_mode == LABYRINTHE_MODE){
@@ -134,7 +156,16 @@ static void core1_entry(void) {
         }
 
         if(gc_valobot_mode == SHOOTING_TRANSITION_MODE){
-            sleep_ms(5000);
+            bool shooting_transition_done = false;
+            
+            while(!shooting_transition_done){
+                shooting_transition_done = follow_line_step();
+                
+                mes_all_dist();
+                sleep_ms(1);
+            }
+
+            gc_valobot_mode = SHOOTING_MODE;
         }
 
         if(gc_valobot_mode == SHOOTING_MODE){
@@ -159,20 +190,20 @@ static void init_all(void) {
 
     ov7670_init();
 
-    // ok : on repasse i2c0 à 400k après init caméra
+    //On repasse i2c0 à 400k après init caméra
     i2c_init(i2c0, 400 * 1000);
     g_tof_ready = tof_init_all();
-    //printf("TOF init: %s\n", g_tof_ready ? "OK" : "FAILED");
     g_imu_ready = imu_init();
-    //printf("IMU init: %s, addr=0x%02X\n", g_imu_ready ? "OK" : "FAILED", imu_get_addr());
+
 
     sleep_ms(100);
 
-    gc_valobot_mode = LINE_FOLLOWING_MODE;
+    //gc_valobot_mode = LINE_FOLLOWING_MODE;
     //gc_valobot_mode = SHOOTING_MODE;
     //gc_valobot_mode = RISING_SLOPE_MODE;
     //gc_valobot_mode = LABYRINTHE_MODE;
     //gc_valobot_mode = REST_MODE;
+    gc_valobot_mode = LABYRINTHE_TRANSITION_MODE;
 
     multicore_launch_core1(core1_entry);
 }
@@ -183,22 +214,33 @@ int main() {
     static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
 
     while (true) {
-        if((gc_valobot_mode == LINE_FOLLOWING_MODE)&&(!line_following_init)){
-            ov7670_capture_frame(frame);
-            find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-            
-            if(debug){
-                ov7670_send_frame_usb(frame);  
-            }          
-        }
+        if(ready_to_use_cam){
+            if((gc_valobot_mode == LINE_FOLLOWING_MODE)&&(!line_following_init)){
+                ov7670_capture_frame(frame);
+                find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+                
+                if(debug){
+                    ov7670_send_frame_usb(frame);  
+                }          
+            }
 
-        if(gc_valobot_mode == SHOOTING_MODE){
-            ov7670_capture_frame(frame);
-            find_targets(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-            
-            if(debug){
-                ov7670_send_frame_usb(frame);  
-            }          
+            if(gc_valobot_mode == LABYRINTHE_TRANSITION_MODE){
+                ov7670_capture_frame(frame);
+                find_line_pos_and_detect_t_shape(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+                
+                if(debug){
+                    ov7670_send_frame_usb(frame);  
+                }          
+            }
+
+            if(gc_valobot_mode == SHOOTING_MODE){
+                ov7670_capture_frame(frame);
+                find_targets(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+                
+                if(debug){
+                    ov7670_send_frame_usb(frame);  
+                }          
+            }
         }
          
         sleep_ms(1);
@@ -225,8 +267,6 @@ int main() {
 
             sleep_ms(50);
 */
-
-
 /*
         int d_right;
         int d_front;
