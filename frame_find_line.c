@@ -14,14 +14,9 @@
 #define LINE_SMOOTH_ALPHA_DEN             4
 #define LINE_REACQUIRE_CONFIRM_FRAMES     2
 
-#define T_SHAPE_MIN_VALID_THICKNESS       15
-#define T_SHAPE_MAX_LINE_CENTER_DELTA_MIN 14
-#define T_SHAPE_MAX_LINE_CENTER_DELTA_DEN  6
-#define T_SHAPE_LINE_WIDTH_MARGIN          4
-#define T_SHAPE_MIN_VALID_WIDTH           60
-#define T_SHAPE_MIN_VALID_WIDTH_RATIO_NUM  1
-#define T_SHAPE_MIN_VALID_WIDTH_RATIO_DEN  2
 #define T_SHAPE_EDGE_EXTENSION_MIN         5
+#define DEPASSEMENT_THRESHOLD              T_SHAPE_EDGE_EXTENSION_MIN
+#define T_SHAPE_MIN_AHEAD_ROWS             4
 
 typedef enum {
     LINE_STATE_LOST = 0,
@@ -48,6 +43,11 @@ static volatile int g_left_elbow_vertical_pos = -1;
 static volatile int g_right_elbow_detected = 0;
 static volatile int g_right_elbow_horizontal_pos = -1;
 static volatile int g_right_elbow_vertical_pos = -1;
+static volatile int g_orange_points_valid = 0;
+static volatile int g_left_orange_point_x = -1;
+static volatile int g_left_orange_point_y = -1;
+static volatile int g_right_orange_point_x = -1;
+static volatile int g_right_orange_point_y = -1;
 
 static line_state_t g_line_state = LINE_STATE_LOST;
 static int g_has_valid_history = 0;
@@ -80,6 +80,11 @@ static void clear_shape_detections(void)
     g_right_elbow_detected = 0;
     g_right_elbow_horizontal_pos = -1;
     g_right_elbow_vertical_pos = -1;
+    g_orange_points_valid = 0;
+    g_left_orange_point_x = -1;
+    g_left_orange_point_y = -1;
+    g_right_orange_point_x = -1;
+    g_right_orange_point_y = -1;
 }
 
 static void publish_t_detection(t_shape_detection_t t_shape)
@@ -101,11 +106,6 @@ static void publish_elbow_detection(int direction, int horizontal_pos, int verti
     g_right_elbow_detected = 1;
     g_right_elbow_horizontal_pos = horizontal_pos;
     g_right_elbow_vertical_pos = vertical_pos;
-}
-
-static int max_int(int a, int b)
-{
-    return (a > b) ? a : b;
 }
 
 static int project_line_center_x_at_y(line_control_point_t control_point, int y)
@@ -232,70 +232,22 @@ static void draw_decided_control_point(uint16_t *frame,
     draw_control_point(frame, width, height, g_line_pos, control_point.center_y, COLOR_RED);
 }
 
-static int get_t_shape_max_center_delta(int rotated_width);
-static int is_t_shape_width_valid(t_shape_detection_t t_shape,
-                                  line_control_point_t control_point,
-                                  int rotated_width);
+static int get_line_band_intersection_x(int line_x,
+                                        int line_y,
+                                        int line_slope_q8,
+                                        int band_x,
+                                        int band_y,
+                                        int band_slope_q8);
+static int get_band_y_at_x(t_shape_detection_t t_shape, int x);
 static int get_t_shape_edge_extension_min(line_control_point_t control_point);
-static int get_t_shape_left_extension(t_shape_detection_t t_shape,
-                                      line_control_point_t control_point);
-static int get_t_shape_right_extension(t_shape_detection_t t_shape,
-                                       line_control_point_t control_point);
+static int get_left_intersection_x(t_shape_detection_t t_shape, line_control_point_t control_point);
+static int get_right_intersection_x(t_shape_detection_t t_shape, line_control_point_t control_point);
+static long point_distance_sq(int x1, int y1, int x2, int y2);
 static int has_valid_shape_edges(t_shape_detection_t t_shape,
                                  line_control_point_t control_point);
-static int is_t_shape_edges_valid(t_shape_detection_t t_shape,
-                                  line_control_point_t control_point);
-
-static int is_t_shape_valid(t_shape_detection_t t_shape,
-                            line_control_point_t control_point,
-                            control_point_confidence_t confidence,
-                            int rotated_width)
-{
-    if (!t_shape.found) {
-        return 0;
-    }
-
-    if (!control_point.found || confidence != CONTROL_POINT_CERTAIN) {
-        return 0;
-    }
-
-    if (t_shape.thickness < T_SHAPE_MIN_VALID_THICKNESS) {
-        return 0;
-    }
-
-    if (!is_t_shape_width_valid(t_shape, control_point, rotated_width)) {
-        return 0;
-    }
-
-    if (!is_t_shape_edges_valid(t_shape, control_point)) {
-        return 0;
-    }
-
-    return 1;
-}
-
-static int get_t_shape_max_center_delta(int rotated_width)
-{
-    return max_int(T_SHAPE_MAX_LINE_CENTER_DELTA_MIN,
-                   rotated_width / T_SHAPE_MAX_LINE_CENTER_DELTA_DEN);
-}
-
-static int is_t_shape_width_valid(t_shape_detection_t t_shape,
-                                  line_control_point_t control_point,
-                                  int rotated_width)
-{
-    const int min_absolute_width =
-        max_int(T_SHAPE_MIN_VALID_WIDTH,
-                (rotated_width * T_SHAPE_MIN_VALID_WIDTH_RATIO_NUM) /
-                T_SHAPE_MIN_VALID_WIDTH_RATIO_DEN);
-
-    if (control_point.width > 0 &&
-        t_shape.width > control_point.width + T_SHAPE_LINE_WIDTH_MARGIN) {
-        return 1;
-    }
-
-    return t_shape.width >= min_absolute_width;
-}
+static int has_t_shape_candidate(t_shape_detection_t t_shape,
+                                 line_control_point_t control_point,
+                                 control_point_confidence_t confidence);
 
 static int get_t_shape_edge_extension_min(line_control_point_t control_point)
 {
@@ -303,24 +255,65 @@ static int get_t_shape_edge_extension_min(line_control_point_t control_point)
     return T_SHAPE_EDGE_EXTENSION_MIN;
 }
 
-static int get_t_shape_left_extension(t_shape_detection_t t_shape,
-                                      line_control_point_t control_point)
+static int get_line_band_intersection_x(int line_x,
+                                        int line_y,
+                                        int line_slope_q8,
+                                        int band_x,
+                                        int band_y,
+                                        int band_slope_q8)
 {
-    const int dy = t_shape.center_y - control_point.center_y;
-    const int line_start_at_shape_y_q8 =
-        control_point.start_x * 256 + control_point.slope_q8 * dy;
+    const long mk = (long)line_slope_q8 * band_slope_q8;
+    const long den = 65536L - mk;
+    const long base_q8 = (long)line_x * 256L + (long)line_slope_q8 * (band_y - line_y);
+    long x_q8;
 
-    return (line_start_at_shape_y_q8 - t_shape.start_x * 256 + 128) / 256;
+    if (den == 0) {
+        return line_x + (line_slope_q8 * (band_y - line_y) + 128) / 256;
+    }
+
+    x_q8 = (base_q8 * 65536L - mk * (long)band_x * 256L) / den;
+    return (int)((x_q8 + 128) / 256);
 }
 
-static int get_t_shape_right_extension(t_shape_detection_t t_shape,
-                                       line_control_point_t control_point)
+static int get_band_y_at_x(t_shape_detection_t t_shape, int x)
 {
-    const int dy = t_shape.center_y - control_point.center_y;
-    const int line_end_at_shape_y_q8 =
-        control_point.end_x * 256 + control_point.slope_q8 * dy;
+    return t_shape.center_y + (t_shape.band_slope_q8 * (x - t_shape.center_x) + 128) / 256;
+}
 
-    return (t_shape.end_x * 256 - line_end_at_shape_y_q8 + 128) / 256;
+static int get_line_edge_x_at_y(int edge_x,
+                                int edge_y,
+                                int edge_slope_q8,
+                                int y)
+{
+    return edge_x + (edge_slope_q8 * (y - edge_y) + 128) / 256;
+}
+
+static int get_left_intersection_x(t_shape_detection_t t_shape, line_control_point_t control_point)
+{
+    return get_line_band_intersection_x(control_point.start_x,
+                                        control_point.center_y,
+                                        control_point.start_slope_q8,
+                                        t_shape.center_x,
+                                        t_shape.center_y,
+                                        t_shape.band_slope_q8);
+}
+
+static int get_right_intersection_x(t_shape_detection_t t_shape, line_control_point_t control_point)
+{
+    return get_line_band_intersection_x(control_point.end_x,
+                                        control_point.center_y,
+                                        control_point.end_slope_q8,
+                                        t_shape.center_x,
+                                        t_shape.center_y,
+                                        t_shape.band_slope_q8);
+}
+
+static long point_distance_sq(int x1, int y1, int x2, int y2)
+{
+    const long dx = (long)x1 - x2;
+    const long dy = (long)y1 - y2;
+
+    return dx * dx + dy * dy;
 }
 
 static int has_valid_shape_edges(t_shape_detection_t t_shape,
@@ -328,74 +321,34 @@ static int has_valid_shape_edges(t_shape_detection_t t_shape,
 {
     return t_shape.start_x >= 0 &&
            t_shape.end_x >= t_shape.start_x &&
+           t_shape.left_ext_x >= 0 &&
+           t_shape.left_ext_y >= 0 &&
+           t_shape.right_ext_x >= 0 &&
+           t_shape.right_ext_y >= 0 &&
            control_point.start_x >= 0 &&
            control_point.end_x >= control_point.start_x;
 }
 
-static int is_t_shape_edges_valid(t_shape_detection_t t_shape,
-                                  line_control_point_t control_point)
+static int has_t_shape_candidate(t_shape_detection_t t_shape,
+                                 line_control_point_t control_point,
+                                 control_point_confidence_t confidence)
 {
-    const int min_extension = get_t_shape_edge_extension_min(control_point);
+    (void)confidence;
 
-    if (!has_valid_shape_edges(t_shape, control_point)) {
-        return 0;
-    }
-
-    return get_t_shape_left_extension(t_shape, control_point) >= min_extension &&
-           get_t_shape_right_extension(t_shape, control_point) >= min_extension;
-}
-
-static int is_elbow_shape(t_shape_detection_t t_shape,
-                          line_control_point_t control_point,
-                          control_point_confidence_t confidence,
-                          int rotated_width)
-{
     if (!t_shape.found) {
         return 0;
     }
 
-    if (!control_point.found || confidence != CONTROL_POINT_CERTAIN) {
+    if (!control_point.found) {
         return 0;
     }
 
-    if (t_shape.thickness < T_SHAPE_MIN_VALID_THICKNESS) {
-        return 0;
-    }
-
-    if (has_valid_shape_edges(t_shape, control_point)) {
-        const int min_extension = get_t_shape_edge_extension_min(control_point);
-        const int left_extension = get_t_shape_left_extension(t_shape, control_point);
-        const int right_extension = get_t_shape_right_extension(t_shape, control_point);
-
-        if ((left_extension >= min_extension) != (right_extension >= min_extension)) {
-            return 1;
-        }
-    }
-
-    return iabs_int(t_shape.center_x - control_point.center_x) >
-           get_t_shape_max_center_delta(rotated_width);
-}
-
-static int get_elbow_direction(t_shape_detection_t t_shape,
-                               line_control_point_t control_point)
-{
-    if (has_valid_shape_edges(t_shape, control_point)) {
-        const int left_extension = get_t_shape_left_extension(t_shape, control_point);
-        const int right_extension = get_t_shape_right_extension(t_shape, control_point);
-
-        if (left_extension > right_extension) {
-            return LEFT_SIDE;
-        }
-
-        return RIGHT_SIDE;
-    }
-
-    return (t_shape.center_x < control_point.center_x) ? LEFT_SIDE : RIGHT_SIDE;
+    return has_valid_shape_edges(t_shape, control_point);
 }
 
 static uint16_t *find_line_pos_internal(uint16_t *frame, int width, int height, int detect_t)
 {
-    t_shape_detection_t t_shape = { false, -1, -1, 0, 0, -1, -1, 0, 0, 0 };
+    t_shape_detection_t t_shape = { false, -1, -1, 0, 0, -1, -1, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0 };
 
     if (!frame || width <= 0 || height <= 0) {
         g_line_found = 0;
@@ -414,19 +367,67 @@ static uint16_t *find_line_pos_internal(uint16_t *frame, int width, int height, 
     line_control_point_t control_point = sort_line(frame, width, height);
 
     if (detect_t && control_point.found) {
-        t_shape = detect_t_shape(frame, width, height, control_point.slope_q8);
+        const int nearest_search_row = control_point.center_y - T_SHAPE_MIN_AHEAD_ROWS;
+
+        t_shape = detect_t_shape(frame,
+                                 width,
+                                 height,
+                                 control_point.slope_q8,
+                                 nearest_search_row);
+        if (t_shape.found) {
+            control_point = refine_line_slope_between(frame,
+                                                      width,
+                                                      height,
+                                                      control_point,
+                                                      t_shape.center_y);
+            t_shape = detect_t_shape(frame,
+                                     width,
+                                     height,
+                                     control_point.slope_q8,
+                                     nearest_search_row);
+        }
     }
 
     control_point_confidence_t confidence = take_decision_2(control_point, width, height);
-    const int valid_t_shape = detect_t &&
-                              is_t_shape_valid(t_shape, control_point, confidence, height);
-    const int elbow_shape = detect_t &&
-                            !valid_t_shape &&
-                            is_elbow_shape(t_shape, control_point, confidence, height);
-    const int elbow_direction = get_elbow_direction(t_shape, control_point);
+    const int shape_candidate = detect_t &&
+                                has_t_shape_candidate(t_shape,
+                                                      control_point,
+                                                      confidence);
+    int left_overrun = 0;
+    int right_overrun = 0;
     const int marker_x = project_line_center_x_at_y(control_point, t_shape.center_y);
     const int marker_y = t_shape.center_y;
     t_shape_detection_t marker_shape = t_shape;
+
+    if (shape_candidate) {
+        g_left_orange_point_x = get_left_intersection_x(t_shape, control_point);
+        g_right_orange_point_x = get_right_intersection_x(t_shape, control_point);
+        g_left_orange_point_y = get_band_y_at_x(t_shape, g_left_orange_point_x);
+        g_right_orange_point_y = get_band_y_at_x(t_shape, g_right_orange_point_x);
+        g_orange_points_valid = 1;
+    }
+
+    if (g_orange_points_valid) {
+        const int threshold = get_t_shape_edge_extension_min(control_point);
+        const long threshold_sq = (long)threshold * threshold;
+        const long left_dist_sq =
+            point_distance_sq(g_left_orange_point_x,
+                              g_left_orange_point_y,
+                              t_shape.left_ext_x,
+                              t_shape.left_ext_y);
+        const long right_dist_sq =
+            point_distance_sq(g_right_orange_point_x,
+                              g_right_orange_point_y,
+                              t_shape.right_ext_x,
+                              t_shape.right_ext_y);
+
+        left_overrun = left_dist_sq > threshold_sq;
+        right_overrun = right_dist_sq > threshold_sq;
+    }
+
+    const int valid_t_shape = left_overrun && right_overrun;
+    const int elbow_shape = left_overrun != right_overrun;
+    int elbow_direction = left_overrun ? LEFT_SIDE : RIGHT_SIDE;
     marker_shape.center_x = marker_x;
     marker_shape.center_y = marker_y;
 
@@ -437,6 +438,57 @@ static uint16_t *find_line_pos_internal(uint16_t *frame, int width, int height, 
     }
 
     draw_decided_control_point(frame, width, height, control_point, confidence);
+
+    if (detect_t && t_shape.found) {
+        draw_detection_geometry(frame, width, height, control_point, t_shape);
+        {
+            const int left_mid_x = (g_left_orange_point_x + t_shape.left_ext_x) / 2;
+            const int left_mid_y = (g_left_orange_point_y + t_shape.left_ext_y) / 2;
+            const int right_mid_x = (g_right_orange_point_x + t_shape.right_ext_x) / 2;
+            const int right_mid_y = (g_right_orange_point_y + t_shape.right_ext_y) / 2;
+
+            if (g_orange_points_valid) {
+                draw_intersection_cross(frame,
+                                        width,
+                                        height,
+                                        g_left_orange_point_x,
+                                        g_left_orange_point_y,
+                                        COLOR_ORANGE);
+                draw_intersection_cross(frame,
+                                        width,
+                                        height,
+                                        g_right_orange_point_x,
+                                        g_right_orange_point_y,
+                                        COLOR_ORANGE);
+            }
+            draw_intersection_cross(frame,
+                                    width,
+                                    height,
+                                    t_shape.left_ext_x,
+                                    t_shape.left_ext_y,
+                                    COLOR_RED);
+            draw_intersection_cross(frame,
+                                    width,
+                                    height,
+                                    t_shape.right_ext_x,
+                                    t_shape.right_ext_y,
+                                    COLOR_RED);
+            if (g_orange_points_valid) {
+                draw_intersection_cross(frame,
+                                        width,
+                                        height,
+                                        left_mid_x,
+                                        left_mid_y,
+                                        COLOR_GREEN);
+                draw_intersection_cross(frame,
+                                        width,
+                                        height,
+                                        right_mid_x,
+                                        right_mid_y,
+                                        COLOR_GREEN);
+            }
+        }
+    }
 
     if (valid_t_shape) {
         draw_t_shape_marker(frame, width, height, marker_shape, COLOR_RED);

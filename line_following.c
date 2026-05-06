@@ -128,6 +128,9 @@ bool follow_line_step(void)
                 move_step(0.0f, 0.0f, 0.0f);
                 return true;
             }   
+        }else{
+            stop_counter --;
+            if(stop_counter < 0){stop_counter = 0;}
         }
 
         follow_line_track_step();
