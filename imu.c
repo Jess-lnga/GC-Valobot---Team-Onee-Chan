@@ -11,6 +11,7 @@
 #define MPU_REG_GYRO_CONFIG    0x1B
 #define MPU_REG_ACCEL_CONFIG   0x1C
 #define MPU_REG_ACCEL_CONFIG2  0x1D
+#define MPU_REG_INT_STATUS     0x3A
 #define MPU_REG_ACCEL_XOUT_H   0x3B
 #define MPU_REG_PWR_MGMT_1     0x6B
 #define MPU_REG_PWR_MGMT_2     0x6C
@@ -25,6 +26,7 @@
 
 static uint8_t g_imu_addr = IMU_ADDR_LOW;
 static bool g_imu_initialized = false;
+static bool g_has_capture = false;
 static float g_instant_pitch = 0.0f;
 static float g_instant_roll = 0.0f;
 static float g_mean_pitch = 0.0f;
@@ -40,6 +42,7 @@ static void imu_mean_reset(void)
 {
     g_instant_pitch = 0.0f;
     g_instant_roll = 0.0f;
+    g_has_capture = false;
     g_mean_pitch = 0.0f;
     g_mean_roll = 0.0f;
     g_mean_index = 0;
@@ -99,6 +102,17 @@ static bool imu_who_am_i_is_valid(uint8_t who_am_i)
     return who_am_i == MPU_WHO_AM_I_9250 ||
            who_am_i == MPU_WHO_AM_I_9255 ||
            who_am_i == MPU_WHO_AM_I_6500;
+}
+
+static bool imu_data_ready(bool *ready)
+{
+    uint8_t status = 0;
+
+    if (!ready) return false;
+    if (!imu_read8(MPU_REG_INT_STATUS, &status)) return false;
+
+    *ready = (status & 0x01u) != 0;
+    return true;
 }
 
 bool imu_init(void)
@@ -204,11 +218,22 @@ bool imu_read_angles(imu_angles_t *angles)
 bool imu_capture(void)
 {
     imu_angles_t angles;
+    bool data_ready = false;
+
+    if (!g_imu_initialized) return false;
+
+    if (!imu_data_ready(&data_ready) || !data_ready) {
+        if (!g_has_capture) return false;
+
+        imu_mean_update(g_instant_pitch, g_instant_roll);
+        return true;
+    }
 
     if (!imu_read_angles(&angles)) return false;
 
     g_instant_pitch = angles.pitch_deg;
     g_instant_roll = angles.roll_deg;
+    g_has_capture = true;
     imu_mean_update(g_instant_pitch, g_instant_roll);
 
     return true;

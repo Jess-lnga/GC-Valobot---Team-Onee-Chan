@@ -30,6 +30,9 @@
 #define FINISHING_MODE              9
 #define REST_MODE                   10
 
+#define RISING_SLOPE_ANGLE_THRESHOLD_DEG  14.0f
+#define MIDDLE_SLOPE_ANGLE_THRESHOLD_DEG  3.0f
+
 static volatile bool g_line_following_ready = false;
 static volatile bool g_tof_ready = false;
 static volatile bool g_imu_ready = false;
@@ -50,14 +53,22 @@ static int gc_valobot_mode = LINE_FOLLOWING_MODE;
 9 = finishing 
 */  
 
+bool line_following_init = true;
+
+
+#define RISING_SLOPE_COUNT_THRESHOLD 5
+int rising_slope_count = 0;
+
 
 static void core1_entry(void) {
     ///////////// SERVO CORE - INITIALIZATION /////////////
     init_servo_ctrl();
     wake_up();
+    raise_head();
 
     for(int i = 0; i < 40; ++i){
         mes_all_dist();
+        imu_capture();
         sleep_ms(50);
     }
 
@@ -65,40 +76,47 @@ static void core1_entry(void) {
     while(true){
 
         if(gc_valobot_mode == LINE_FOLLOWING_MODE){
-            //follow_line_step();
+            
+            if(line_following_init){
+                look_down();
+                line_following_init = false;
+                sleep_ms(1000);
+            }
+
+            follow_line_step();
+
+            imu_capture();
+
+            float pitch = get_mean_pitch();
+
+            if(pitch > RISING_SLOPE_ANGLE_THRESHOLD_DEG){
+                gc_valobot_mode = RISING_SLOPE_MODE;
+            }
             sleep_ms(1);
         }
 
         if(gc_valobot_mode == RISING_SLOPE_MODE){
-            //heavy_gate();
+            heavy_gate();
 
-            if (!g_imu_ready) {
-                printf("\033[HIMU init failed                                      ");
-                fflush(stdout);
-                sleep_ms(250);
-                continue;
+            imu_capture();
+            float pitch = get_mean_pitch();
+
+            if(abs(pitch) < MIDDLE_SLOPE_ANGLE_THRESHOLD_DEG){
+                gc_valobot_mode = MIDDLE_SLOPE_MODE;
             }
 
-            if (!imu_capture()) {
-                printf("\033[HIMU read failed                                      ");
-                fflush(stdout);
-                sleep_ms(250);
-                continue;
-            }
+        }
 
-            printf(
-                "\033[HIMU inst | pitch=%7.2f deg | roll=%7.2f deg | addr=0x%02X        \n"
-                "IMU mean | pitch=%7.2f deg | roll=%7.2f deg | n=%2d             ",
-                get_instant_pitch(),
-                get_instant_roll(),
-                imu_get_addr(),
-                get_mean_pitch(),
-                get_mean_roll(),
-                IMU_MEAN_WINDOW
-            );
-            fflush(stdout);
+        if(gc_valobot_mode == MIDDLE_SLOPE_MODE){
+        
+        }
 
-            sleep_ms(50);
+        if(gc_valobot_mode == FALLING_SLOPE_MODE){
+    
+        }
+
+        if(gc_valobot_mode == LABYRINTHE_TRANSITION_MODE){
+    
         }
 
         if(gc_valobot_mode == LABYRINTHE_MODE){
@@ -116,6 +134,18 @@ static void core1_entry(void) {
         }
 
         if(gc_valobot_mode == SHOOTING_TRANSITION_MODE){
+            sleep_ms(5000);
+        }
+
+        if(gc_valobot_mode == SHOOTING_MODE){
+            sleep_ms(5000);
+        }
+
+        if(gc_valobot_mode == GOING_TO_SPYKE_MODE){
+            sleep_ms(5000);
+        }
+
+        if(gc_valobot_mode == FINISHING_MODE){
             sleep_ms(5000);
         }
     }
@@ -138,9 +168,9 @@ static void init_all(void) {
 
     sleep_ms(100);
 
-    //gc_valobot_mode = LINE_FOLLOWING_MODE;
+    gc_valobot_mode = LINE_FOLLOWING_MODE;
     //gc_valobot_mode = SHOOTING_MODE;
-    gc_valobot_mode = RISING_SLOPE_MODE;
+    //gc_valobot_mode = RISING_SLOPE_MODE;
     //gc_valobot_mode = LABYRINTHE_MODE;
     //gc_valobot_mode = REST_MODE;
 
@@ -153,9 +183,9 @@ int main() {
     static uint16_t frame[OV7670_IMG_WIDTH * OV7670_IMG_HEIGHT];
 
     while (true) {
-        if(gc_valobot_mode == LINE_FOLLOWING_MODE){
+        if((gc_valobot_mode == LINE_FOLLOWING_MODE)&&(!line_following_init)){
             ov7670_capture_frame(frame);
-            //find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+            find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
             
             if(debug){
                 ov7670_send_frame_usb(frame);  
@@ -174,6 +204,27 @@ int main() {
         sleep_ms(1);
     }
 }
+
+
+
+/*
+
+            imu_capture();
+            
+            printf(
+                "\033[HIMU inst | pitch=%7.2f deg | roll=%7.2f deg | addr=0x%02X        \n"
+                "IMU mean | pitch=%7.2f deg | roll=%7.2f deg | n=%2d             ",
+                get_instant_pitch(),
+                get_instant_roll(),
+                imu_get_addr(),
+                get_mean_pitch(),
+                get_mean_roll(),
+                IMU_MEAN_WINDOW
+            );
+            fflush(stdout);
+
+            sleep_ms(50);
+*/
 
 
 /*

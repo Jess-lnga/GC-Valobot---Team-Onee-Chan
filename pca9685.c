@@ -4,6 +4,7 @@
 
 #include "pca9685.h"
 #include "tof.h"
+#include "imu.h"
 
 #define I2C_PORT      i2c0
 #define I2C_SDA_PIN   4      // GP4
@@ -58,6 +59,11 @@ static int _moved_side = LEFT_SIDE; // -1 = none, 0 = left, 1 = right
 bool initialize = true;
 int count = 0;
 
+void quick_sensors_measurement_and_delay(int delay_ms) {
+    mes_all_dist();
+    imu_capture();
+    sleep_ms(delay_ms);
+}
 
 const float us_par_tick = (1000000.0f / 50.0f) / 4096.0f;
 // ------------------------------------------------ //
@@ -691,6 +697,45 @@ void move(float D, float theta_t, float theta_r){
 }
 
 
+#define HEAD_MAX_TICKS 2000
+#define HEAD_MIN_TICKS 1100
+
+void set_head_pos(int angle_us){
+
+    if(angle_us > HEAD_MAX_TICKS){angle_us = HEAD_MAX_TICKS;}
+    if(angle_us < HEAD_MIN_TICKS){angle_us = HEAD_MIN_TICKS;}
+
+    pca_write_pwm(HEAD_SERVO, 0, to_ticks_us(angle_us, us_par_tick));
+
+}
+
+void nod_head(){
+    for(int us = HEAD_MIN_TICKS; us <= HEAD_MAX_TICKS; us += 10) {             
+        set_head_pos(us);
+        sleep_ms(10);
+    }
+
+    for (int us = HEAD_MAX_TICKS; us >= HEAD_MIN_TICKS; us -= 10) {             
+        set_head_pos(us);
+        sleep_ms(10);
+    }
+}
+
+void raise_head(){
+    for (int us = HEAD_MAX_TICKS; us >= HEAD_MIN_TICKS; us -= 10) {             
+        set_head_pos(us);
+        sleep_ms(10);
+    }
+}
+
+void look_down(){
+    for(int us = HEAD_MIN_TICKS; us <= HEAD_MAX_TICKS; us += 10) {             
+        set_head_pos(us);
+        sleep_ms(10);
+    }
+}
+
+
 void move_step(float D, float theta_t, float theta_r){
 
     // -------------- GENERAL COMPUTATION FOR MOVEMENT -------------- //
@@ -770,9 +815,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
             
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+           quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
             
         }
 
@@ -801,9 +847,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+            quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
         }
 
 
@@ -816,9 +863,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick));  
 
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+            quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
         }
         
         _moved_side = LEFT_SIDE;
@@ -832,9 +880,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick)); 
             
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+            quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
         }
 
         _moved_side = RIGHT_SIDE;
@@ -862,9 +911,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_FL, 0, to_ticks_us(us1r, us_par_tick));
             pca_write_pwm(COXA_BR, 0, to_ticks_us(us2r, us_par_tick));  
 
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+            quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
         }
         
         _moved_side = RIGHT_SIDE;
@@ -876,9 +926,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(TROC_FL, 0, to_ticks_us(us, us_par_tick));
             pca_write_pwm(TROC_BR, 0, to_ticks_us(us, us_par_tick));  
             
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+            quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
         }
         
         _moved_side = RIGHT_SIDE;
@@ -948,9 +999,10 @@ void move_step(float D, float theta_t, float theta_r){
             pca_write_pwm(COXA_BL, 0, to_ticks_us(us1l, us_par_tick));
             pca_write_pwm(COXA_FR, 0, to_ticks_us(us2l, us_par_tick));
 
-            sleep_ms(1);
-            mes_all_dist();
-            sleep_ms(9);
+            quick_sensors_measurement_and_delay(10);
+            //sleep_ms(1);
+            //mes_all_dist();
+            //sleep_ms(9);
 
         }
 
@@ -982,9 +1034,10 @@ void heavy_gate(){
         pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
         pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick)); 
         
-        sleep_ms(1);
-        mes_all_dist();
-        sleep_ms(9); 
+        quick_sensors_measurement_and_delay(10);
+        //sleep_ms(1);
+        //mes_all_dist();
+        //sleep_ms(9); 
     }
 
     
@@ -1016,9 +1069,10 @@ void heavy_gate(){
         pca_write_pwm(COXA_FR, 0, to_ticks_us(usfr, us_par_tick));
         pca_write_pwm(COXA_BR, 0, to_ticks_us(usbr, us_par_tick));
 
-        sleep_ms(1);
-        mes_all_dist();
-        sleep_ms(9);
+        quick_sensors_measurement_and_delay(10);
+        //sleep_ms(1);
+        //mes_all_dist();
+        //sleep_ms(9);
     }
 
 
@@ -1028,9 +1082,10 @@ void heavy_gate(){
         pca_write_pwm(TROC_BL, 0, to_ticks_us(us, us_par_tick)); 
         pca_write_pwm(TROC_FR, 0, to_ticks_us(us, us_par_tick)); 
         
-        sleep_ms(1);
-        mes_all_dist();
-        sleep_ms(9); 
+        quick_sensors_measurement_and_delay(10);
+        //sleep_ms(1);
+        //mes_all_dist();
+        //sleep_ms(9); 
     }
 
     start_usbr = servo_angle_us[COXA_BR]; 
@@ -1060,9 +1115,10 @@ void heavy_gate(){
         pca_write_pwm(COXA_FR, 0, to_ticks_us(usfr, us_par_tick));
         pca_write_pwm(COXA_BR, 0, to_ticks_us(usbr, us_par_tick)); 
         
-        sleep_ms(1);
-        mes_all_dist();
-        sleep_ms(9); 
+        quick_sensors_measurement_and_delay(10);
+        //sleep_ms(1);
+        //mes_all_dist();
+        //sleep_ms(9); 
     }
 }
 
