@@ -32,6 +32,7 @@ void heavy_gate();
 void heavy_gate_2(float D, float theta_t, float theta_r);
 
 void nod_head();
+void initial_raise_head();
 void raise_head();
 
 void look_down(int level);

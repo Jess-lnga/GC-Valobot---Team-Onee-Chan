@@ -67,7 +67,7 @@ static void core1_entry(void) {
     ///////////// SERVO CORE - INITIALIZATION /////////////
     init_servo_ctrl();
     wake_up();
-    raise_head();
+    initial_raise_head();
 
     sleep_ms(1000);
     

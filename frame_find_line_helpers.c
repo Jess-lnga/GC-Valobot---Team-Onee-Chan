@@ -18,6 +18,8 @@
 #define CONTROL_BAND_HEIGHT           24
 #define MAX_SEGMENTS_PER_ROW           8
 #define MAX_ROW_CENTER_JUMP          24
+#define LINE_SEGMENT_MAX_WIDTH_RATIO_NUM 1
+#define LINE_SEGMENT_MAX_WIDTH_RATIO_DEN 2
 #define T_SHAPE_MIN_WIDTH_RATIO_NUM    1
 #define T_SHAPE_MIN_WIDTH_RATIO_DEN    2
 #define T_SHAPE_MIN_ABSOLUTE_WIDTH    40
@@ -91,6 +93,11 @@ static int clamp_int(int x, int xmin, int xmax)
     if (x < xmin) return xmin;
     if (x > xmax) return xmax;
     return x;
+}
+
+static int project_x_q8(int x, int y, int slope_q8)
+{
+    return x * 256 - slope_q8 * y;
 }
 
 static int compute_dynamic_black_threshold(const uint16_t *frame, int width, int height)
@@ -188,6 +195,17 @@ static int iabs_int(int x)
     return (x < 0) ? -x : x;
 }
 
+static int get_max_line_segment_width(int rotated_width)
+{
+    return (rotated_width * LINE_SEGMENT_MAX_WIDTH_RATIO_NUM) /
+           LINE_SEGMENT_MAX_WIDTH_RATIO_DEN;
+}
+
+static bool is_line_segment_width_valid(int segment_width, int rotated_width)
+{
+    return segment_width <= get_max_line_segment_width(rotated_width);
+}
+
 static void register_segment_candidate(black_segment_t *segments,
                                        int *segment_count,
                                        int start_x,
@@ -279,7 +297,8 @@ void find_black_segments(uint16_t *frame, int width, int height)
 
             if (last_black_x >= segment_start) {
                 const int segment_width = last_black_x - segment_start + 1;
-                if (segment_width >= MIN_BLACK_SEGMENT_WIDTH) {
+                if (segment_width >= MIN_BLACK_SEGMENT_WIDTH &&
+                    is_line_segment_width_valid(segment_width, rotated_width)) {
                     register_segment_candidate(segments, &segment_count, segment_start, last_black_x);
                 }
             }
@@ -291,7 +310,8 @@ void find_black_segments(uint16_t *frame, int width, int height)
 
         if (segment_start >= 0 && last_black_x >= segment_start) {
             const int segment_width = last_black_x - segment_start + 1;
-            if (segment_width >= MIN_BLACK_SEGMENT_WIDTH) {
+            if (segment_width >= MIN_BLACK_SEGMENT_WIDTH &&
+                is_line_segment_width_valid(segment_width, rotated_width)) {
                 register_segment_candidate(segments, &segment_count, segment_start, last_black_x);
             }
         }
@@ -333,7 +353,7 @@ void draw_control_point(uint16_t *frame, int width, int height, int center_x, in
     }
 }
 
-t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
+t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height, int line_slope_q8)
 {
     const int rotated_width = height;
     const int rotated_height = width;
@@ -341,12 +361,14 @@ t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
                                       / T_SHAPE_MIN_WIDTH_RATIO_DEN,
                                       T_SHAPE_MIN_ABSOLUTE_WIDTH,
                                       rotated_width);
-    t_shape_detection_t best = { false, -1, -1, 0, 0 };
+    t_shape_detection_t best = { false, -1, -1, 0, 0, -1, -1, line_slope_q8, 0, 0 };
 
     int run_start_row = -1;
     int run_end_row = -1;
     int run_min_x = rotated_width;
     int run_max_x = -1;
+    int run_min_proj_q8 = 0x7FFFFFFF;
+    int run_max_proj_q8 = -0x7FFFFFFF;
     int run_sum_center_x = 0;
     int run_row_count = 0;
 
@@ -375,11 +397,15 @@ t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
 
         if (is_wide_black_row) {
             const int center_x = (first_black_x + last_black_x) / 2;
+            const int first_proj_q8 = project_x_q8(first_black_x, row, line_slope_q8);
+            const int last_proj_q8 = project_x_q8(last_black_x, row, line_slope_q8);
 
             if (run_start_row < 0) {
                 run_start_row = row;
                 run_min_x = first_black_x;
                 run_max_x = last_black_x;
+                run_min_proj_q8 = 0x7FFFFFFF;
+                run_max_proj_q8 = -0x7FFFFFFF;
                 run_sum_center_x = 0;
                 run_row_count = 0;
             }
@@ -387,6 +413,10 @@ t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
             run_end_row = row;
             if (first_black_x < run_min_x) run_min_x = first_black_x;
             if (last_black_x > run_max_x) run_max_x = last_black_x;
+            if (first_proj_q8 < run_min_proj_q8) run_min_proj_q8 = first_proj_q8;
+            if (first_proj_q8 > run_max_proj_q8) run_max_proj_q8 = first_proj_q8;
+            if (last_proj_q8 < run_min_proj_q8) run_min_proj_q8 = last_proj_q8;
+            if (last_proj_q8 > run_max_proj_q8) run_max_proj_q8 = last_proj_q8;
             run_sum_center_x += center_x;
             run_row_count++;
             continue;
@@ -399,12 +429,19 @@ t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
             best.center_y = (run_start_row + run_end_row) / 2;
             best.width = run_max_x - run_min_x + 1;
             best.thickness = run_row_count;
+            best.start_x = run_min_x;
+            best.end_x = run_max_x;
+            best.slope_q8 = line_slope_q8;
+            best.start_proj_q8 = run_min_proj_q8;
+            best.end_proj_q8 = run_max_proj_q8;
         }
 
         run_start_row = -1;
         run_end_row = -1;
         run_min_x = rotated_width;
         run_max_x = -1;
+        run_min_proj_q8 = 0x7FFFFFFF;
+        run_max_proj_q8 = -0x7FFFFFFF;
         run_sum_center_x = 0;
         run_row_count = 0;
     }
@@ -416,6 +453,11 @@ t_shape_detection_t detect_t_shape(uint16_t *frame, int width, int height)
         best.center_y = (run_start_row + run_end_row) / 2;
         best.width = run_max_x - run_min_x + 1;
         best.thickness = run_row_count;
+        best.start_x = run_min_x;
+        best.end_x = run_max_x;
+        best.slope_q8 = line_slope_q8;
+        best.start_proj_q8 = run_min_proj_q8;
+        best.end_proj_q8 = run_max_proj_q8;
     }
 
     return best;
@@ -433,23 +475,26 @@ void draw_t_shape_marker(uint16_t *frame, int width, int height, t_shape_detecti
     const int stem_len = 12;
     const int x0 = clamp_int(t_shape.center_x, 0, rotated_width - 1);
     const int y0 = clamp_int(t_shape.center_y, 0, rotated_height - 1);
+    const int slope_q8 = t_shape.slope_q8;
 
     for (int dx = -half_bar; dx <= half_bar; ++dx) {
         const int x = x0 + dx;
-        if (x >= 0 && x < rotated_width) {
-            set_px_rotm90(frame, width, height, x, y0, color);
-            if (y0 + 1 < rotated_height) {
-                set_px_rotm90(frame, width, height, x, y0 + 1, color);
+        const int y = y0 - (slope_q8 * dx + 128) / 256;
+        if (x >= 0 && x < rotated_width && y >= 0 && y < rotated_height) {
+            set_px_rotm90(frame, width, height, x, y, color);
+            if (y + 1 < rotated_height) {
+                set_px_rotm90(frame, width, height, x, y + 1, color);
             }
         }
     }
 
     for (int dy = 0; dy <= stem_len; ++dy) {
         const int y = y0 + dy;
-        if (y >= 0 && y < rotated_height) {
-            set_px_rotm90(frame, width, height, x0, y, color);
-            if (x0 + 1 < rotated_width) {
-                set_px_rotm90(frame, width, height, x0 + 1, y, color);
+        const int x = x0 + (slope_q8 * dy + 128) / 256;
+        if (x >= 0 && x < rotated_width && y >= 0 && y < rotated_height) {
+            set_px_rotm90(frame, width, height, x, y, color);
+            if (x + 1 < rotated_width) {
+                set_px_rotm90(frame, width, height, x + 1, y, color);
             }
         }
     }
@@ -461,6 +506,7 @@ void draw_elbow_marker(uint16_t *frame,
                        int center_x,
                        int center_y,
                        int direction,
+                       int slope_q8,
                        uint16_t color)
 {
     const int rotated_width = height;
@@ -473,20 +519,22 @@ void draw_elbow_marker(uint16_t *frame,
 
     for (int dy = 0; dy <= stem_len; ++dy) {
         const int y = y0 + dy;
-        if (y >= 0 && y < rotated_height) {
-            set_px_rotm90(frame, width, height, x0, y, color);
-            if (x0 + 1 < rotated_width) {
-                set_px_rotm90(frame, width, height, x0 + 1, y, color);
+        const int x = x0 + (slope_q8 * dy + 128) / 256;
+        if (x >= 0 && x < rotated_width && y >= 0 && y < rotated_height) {
+            set_px_rotm90(frame, width, height, x, y, color);
+            if (x + 1 < rotated_width) {
+                set_px_rotm90(frame, width, height, x + 1, y, color);
             }
         }
     }
 
     for (int dx = 0; dx <= branch_len; ++dx) {
         const int x = x0 + dir * dx;
-        if (x >= 0 && x < rotated_width) {
-            set_px_rotm90(frame, width, height, x, y0, color);
-            if (y0 + 1 < rotated_height) {
-                set_px_rotm90(frame, width, height, x, y0 + 1, color);
+        const int y = y0 - (slope_q8 * dir * dx + 128) / 256;
+        if (x >= 0 && x < rotated_width && y >= 0 && y < rotated_height) {
+            set_px_rotm90(frame, width, height, x, y, color);
+            if (y + 1 < rotated_height) {
+                set_px_rotm90(frame, width, height, x, y + 1, color);
             }
         }
     }
@@ -499,18 +547,51 @@ line_control_point_t sort_line(uint16_t *frame, int width, int height)
     const int band_start_row = rotated_height - CONTROL_BAND_HEIGHT;
     long sum_x = 0;
     long sum_y = 0;
+    long sum_width = 0;
+    long sum_start_x = 0;
+    long sum_end_x = 0;
+    long sum_yy = 0;
+    long sum_xy = 0;
     int center_count = 0;
-    line_control_point_t output = { false, -1, -1 };
+    int width_count = 0;
+    line_control_point_t output = { false, -1, -1, 0, -1, -1, 0, 0, 0 };
 
     for (int row = band_start_row; row < rotated_height; ++row) {
+        long row_sum_x = 0;
+        int row_center_count = 0;
+        int row_first_edge_x = -1;
+        int row_last_edge_x = -1;
+
         for (int col = 0; col < rotated_width; ++col) {
-            if (get_px_rotm90(frame, width, height, col, row) != COLOR_GREEN) {
+            const uint16_t px = get_px_rotm90(frame, width, height, col, row);
+
+            if (px == COLOR_BLUE) {
+                if (row_first_edge_x < 0) {
+                    row_first_edge_x = col;
+                }
+                row_last_edge_x = col;
                 continue;
             }
 
-            sum_x += col;
-            sum_y += row;
-            center_count++;
+            if (px == COLOR_GREEN) {
+                row_sum_x += col;
+                row_center_count++;
+            }
+        }
+
+        if (row_center_count > 0 &&
+            row_first_edge_x >= 0 &&
+            row_last_edge_x >= row_first_edge_x &&
+            is_line_segment_width_valid(row_last_edge_x - row_first_edge_x + 1, rotated_width)) {
+            sum_x += row_sum_x;
+            sum_y += (long)row * row_center_count;
+            sum_yy += (long)row * row * row_center_count;
+            sum_xy += row_sum_x * row;
+            center_count += row_center_count;
+            sum_width += row_last_edge_x - row_first_edge_x + 1;
+            sum_start_x += row_first_edge_x;
+            sum_end_x += row_last_edge_x;
+            width_count++;
         }
     }
 
@@ -521,6 +602,21 @@ line_control_point_t sort_line(uint16_t *frame, int width, int height)
     output.found = true;
     output.center_x = (int)((sum_x + center_count / 2) / center_count);
     output.center_y = (int)((sum_y + center_count / 2) / center_count);
+    {
+        const long den = (long)center_count * sum_yy - sum_y * sum_y;
+        if (den != 0) {
+            const long num = (long)center_count * sum_xy - sum_y * sum_x;
+            output.slope_q8 = (int)((num * 256 + den / 2) / den);
+            output.slope_q8 = clamp_int(output.slope_q8, -1024, 1024);
+        }
+    }
+    if (width_count > 0) {
+        output.width = (int)((sum_width + width_count / 2) / width_count);
+        output.start_x = (int)((sum_start_x + width_count / 2) / width_count);
+        output.end_x = (int)((sum_end_x + width_count / 2) / width_count);
+        output.start_proj_q8 = project_x_q8(output.start_x, output.center_y, output.slope_q8);
+        output.end_proj_q8 = project_x_q8(output.end_x, output.center_y, output.slope_q8);
+    }
 
     return output;
 }

@@ -50,11 +50,16 @@ static int servo_angle_us[16] = {0};
 #define LEFT_SIDE           0
 #define RIGHT_SIDE          1
 
+#define HEAD_MAX_TICKS 2000
+#define HEAD_MIN_TICKS 1100
+
 #define HEAD_POS_US_0       2000
 #define HEAD_POS_US_1       1800
 #define HEAD_POS_US_2       1600
 #define HEAD_POS_US_3       1400
+#define HEAD_POS_UP_US      1100
 
+#define HEAD_MVMNT_STEPS    40
 
 static int _state = RISE_LEFT_TROC;
 static int _moved_side = LEFT_SIDE; // -1 = none, 0 = left, 1 = right
@@ -703,10 +708,6 @@ void move(float D, float theta_t, float theta_r){
     }
 }
 
-
-#define HEAD_MAX_TICKS 2000
-#define HEAD_MIN_TICKS 1100
-
 void set_head_pos(int angle_us){
 
     if(angle_us > HEAD_MAX_TICKS){angle_us = HEAD_MAX_TICKS;}
@@ -728,11 +729,28 @@ void nod_head(){
     }
 }
 
-void raise_head(){
+void initial_raise_head(){
     for (int us = HEAD_MAX_TICKS; us >= HEAD_MIN_TICKS; us -= 10) {             
         set_head_pos(us);
         sleep_ms(10);
     }
+}
+
+void raise_head(){
+    float start_us, stop_us, slope_us;
+    start_us = servo_angle_us[HEAD_SERVO];
+    stop_us = HEAD_POS_UP_US;
+
+    slope_us = (stop_us - start_us);
+
+    for(int i = 0; i <= HEAD_MVMNT_STEPS;  ++i){ 
+
+        int us = start_us + i*slope_us/(HEAD_MVMNT_STEPS*1.0);
+
+        set_head_pos(us);
+        sleep_ms(10);
+    }
+
 }
     
 void look_down(int level){
@@ -761,10 +779,9 @@ void look_down(int level){
 
     slope_us = (stop_us - start_us);
 
-    int steps = 20;
-    for(int i = 0; i <= steps;  ++i){ 
+    for(int i = 0; i <= HEAD_MVMNT_STEPS ;  ++i){ 
 
-        int us = start_us + i*slope_us/(steps*1.0);
+        int us = start_us + i*slope_us/(HEAD_MVMNT_STEPS *1.0);
 
         set_head_pos(us);
         sleep_ms(10);
