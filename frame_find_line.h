@@ -18,6 +18,7 @@ typedef struct {
 
 uint16_t *find_line_pos(uint16_t *frame, int width, int height);
 uint16_t *find_line_pos_and_detect_t_shape(uint16_t *frame, int width, int height);
+//uint16_t *find_line_pos_and_detect_t_shape_2(uint16_t *frame, int width, int height);
 
 int get_line_pos(void);
 int is_line_found(void);

@@ -28,6 +28,7 @@
 #define T_SHAPE_MIN_THICKNESS          4
 #define T_SHAPE_BORDER_MARGIN          4
 #define T_SHAPE_MIN_VERTICAL_FIT_POINTS 4
+#define LINE_EDGE_FIT_BORDER_MARGIN    1
 #define LINE_REFINE_MAX_CENTER_DELTA  30
 
 typedef struct {
@@ -1203,7 +1204,9 @@ line_control_point_t refine_line_slope_between(uint16_t *frame,
 
         if (row_center_count == 1 &&
             nearest_left_edge_x >= 0 &&
-            nearest_right_edge_x >= nearest_left_edge_x) {
+            nearest_right_edge_x >= nearest_left_edge_x &&
+            nearest_left_edge_x > LINE_EDGE_FIT_BORDER_MARGIN &&
+            nearest_right_edge_x < rotated_width - 1 - LINE_EDGE_FIT_BORDER_MARGIN) {
             sum_start_x += nearest_left_edge_x;
             sum_start_y += row;
             sum_start_yy += (long)row * row;
@@ -1218,6 +1221,18 @@ line_control_point_t refine_line_slope_between(uint16_t *frame,
 
     if (center_count >= 4) {
         control_point.slope_q8 = fit_x_from_y_q8(sum_x, sum_y, sum_yy, sum_xy, center_count);
+        {
+            const int mean_center_x = (int)((sum_x + center_count / 2) / center_count);
+            const int mean_center_y = (int)((sum_y + center_count / 2) / center_count);
+            const int center_proj_q8 = project_x_q8(mean_center_x,
+                                                    mean_center_y,
+                                                    control_point.slope_q8);
+            control_point.center_x = clamp_int(unproject_x_at_y(center_proj_q8,
+                                                                control_point.center_y,
+                                                                control_point.slope_q8),
+                                               0,
+                                               rotated_width - 1);
+        }
     }
 
     if (edge_count >= 4) {
@@ -1231,6 +1246,30 @@ line_control_point_t refine_line_slope_between(uint16_t *frame,
                                                      sum_end_yy,
                                                      sum_end_xy,
                                                      edge_count);
+        {
+            const int mean_start_x = (int)((sum_start_x + edge_count / 2) / edge_count);
+            const int mean_start_y = (int)((sum_start_y + edge_count / 2) / edge_count);
+            const int mean_end_x = (int)((sum_end_x + edge_count / 2) / edge_count);
+            const int mean_end_y = (int)((sum_end_y + edge_count / 2) / edge_count);
+            const int refined_start_x =
+                unproject_x_at_y(project_x_q8(mean_start_x,
+                                               mean_start_y,
+                                               control_point.start_slope_q8),
+                                  control_point.center_y,
+                                  control_point.start_slope_q8);
+            const int refined_end_x =
+                unproject_x_at_y(project_x_q8(mean_end_x,
+                                               mean_end_y,
+                                               control_point.end_slope_q8),
+                                  control_point.center_y,
+                                  control_point.end_slope_q8);
+
+            if (refined_start_x <= refined_end_x) {
+                control_point.start_x = clamp_int(refined_start_x, 0, rotated_width - 1);
+                control_point.end_x = clamp_int(refined_end_x, 0, rotated_width - 1);
+                control_point.width = control_point.end_x - control_point.start_x + 1;
+            }
+        }
     } else {
         control_point.start_slope_q8 = control_point.slope_q8;
         control_point.end_slope_q8 = control_point.slope_q8;
