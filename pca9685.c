@@ -16,6 +16,8 @@
 #define MODE2         0x01
 #define PRE_SCALE     0xFE
 #define LED0_ON_L     0x06   // LEDn_ON_L = 0x06 + 4*n
+#define PWM_FULL_OFF  0x10   // Bit 4 de LEDn_OFF_H
+#define SERVO_STARTUP_DELAY_MS 150
 
 #define COXA_FL 11
 #define COXA_FR 4
@@ -93,6 +95,14 @@ static inline int to_us_ticks(uint16_t ticks, float us_per_tick) {
 static void pca_write8(uint8_t reg, uint8_t val) {
     uint8_t buf[2] = {reg, val};
     (void)i2c_write_blocking(I2C_PORT, PCA_ADDR, buf, 2, false);
+}
+
+static void pca_disable_all_outputs(void) {
+    // Ecritures individuelles : fonctionne avant l'activation de l'auto-increment.
+    // FULL_OFF coupe les impulsions, pas l'alimentation V+ des servos.
+    for (uint8_t channel = 0; channel < 16; ++channel) {
+        pca_write8(LED0_ON_L + 4 * channel + 3, PWM_FULL_OFF);
+    }
 }
 /// ////////////////////////////////////////////////////////////////////////// ///
 static void pca_write_pwm_offset(uint8_t channel, uint16_t on, uint16_t off, int offset) {
@@ -209,6 +219,9 @@ void init_servo_ctrl(){
     gpio_pull_up(I2C_SCL_PIN);
 
     //i2c_scan();
+
+    // Desactiver aussi les anciennes consignes si seul le Pico a redemarre.
+    pca_disable_all_outputs();
 
     // Config PCA9685 à 50 Hz (servos)
     pca_set_freq(50.0f);
@@ -2367,13 +2380,20 @@ void wake_up(){
     int us_troca = 2000;
 
     pca_write_pwm(COXA_FL, 0, to_ticks_us(us_coxa, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     pca_write_pwm(COXA_FR, 0, to_ticks_us(us_coxa, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     pca_write_pwm(COXA_BL, 0, to_ticks_us(us_coxa, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     pca_write_pwm(COXA_BR, 0, to_ticks_us(us_coxa, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     
     pca_write_pwm(TROC_BL, 0, to_ticks_us(us_troca, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     pca_write_pwm(TROC_BR, 0, to_ticks_us(us_troca, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     pca_write_pwm(TROC_FL, 0, to_ticks_us(us_troca, us_par_tick));
+    sleep_ms(SERVO_STARTUP_DELAY_MS);
     pca_write_pwm(TROC_FR, 0, to_ticks_us(us_troca, us_par_tick));
 
     sleep_ms(1000);

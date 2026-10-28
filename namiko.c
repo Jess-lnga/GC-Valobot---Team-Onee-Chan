@@ -226,11 +226,14 @@ int main() {
 
             if(gc_valobot_mode == LABYRINTHE_TRANSITION_MODE){
                 ov7670_capture_frame(frame);
-                find_line_pos_and_detect_t_shape(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
-                
+
                 if(debug){
                     ov7670_send_frame_usb(frame);  
-                }          
+                }
+                
+                find_line_pos_and_detect_t_shape(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+                
+                          
             }
 
             if(gc_valobot_mode == SHOOTING_MODE){
