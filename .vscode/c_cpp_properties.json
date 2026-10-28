@@ -4,8 +4,8 @@
         {
             "name": "Pico",
             "configurationProvider": "ms-vscode.cmake-tools",
-            "compileCommands": "${workspaceFolder}/compile_commands.json",
-            "compilerPath": "C:/Users/Jérôme ESSOLA ELANGA/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc.exe",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "compilerPath": "${userHome}/.pico-sdk/toolchain/14_2_Rel1/bin/arm-none-eabi-gcc.exe",
             "intelliSenseMode": "gcc-arm",
             "cStandard": "c11",
             "cppStandard": "c++17"
