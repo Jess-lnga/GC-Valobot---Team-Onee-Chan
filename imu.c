@@ -26,7 +26,6 @@
 
 static uint8_t g_imu_addr = IMU_ADDR_LOW;
 static bool g_imu_initialized = false;
-static bool g_has_capture = false;
 static float g_instant_pitch = 0.0f;
 static float g_instant_roll = 0.0f;
 static float g_mean_pitch = 0.0f;
@@ -42,7 +41,6 @@ static void imu_mean_reset(void)
 {
     g_instant_pitch = 0.0f;
     g_instant_roll = 0.0f;
-    g_has_capture = false;
     g_mean_pitch = 0.0f;
     g_mean_roll = 0.0f;
     g_mean_index = 0;
@@ -222,18 +220,13 @@ bool imu_capture(void)
 
     if (!g_imu_initialized) return false;
 
-    if (!imu_data_ready(&data_ready) || !data_ready) {
-        if (!g_has_capture) return false;
-
-        imu_mean_update(g_instant_pitch, g_instant_roll);
-        return true;
-    }
+    // Seule une nouvelle mesure valide peut alimenter les temporisations de la FSM.
+    if (!imu_data_ready(&data_ready) || !data_ready) return false;
 
     if (!imu_read_angles(&angles)) return false;
 
     g_instant_pitch = angles.pitch_deg;
     g_instant_roll = angles.roll_deg;
-    g_has_capture = true;
     imu_mean_update(g_instant_pitch, g_instant_roll);
 
     return true;

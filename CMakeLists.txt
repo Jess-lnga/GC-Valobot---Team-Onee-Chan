@@ -33,10 +33,12 @@ add_executable(onee_chan
     frame_find_line.c
     frame_find_line_helpers.c
     frame_find_target.c
+    frame_find_ball.c
     frame_find_target_helpers.c
     labyrinthe.c
     line_following.c
     imu.c
+    interactive.c
     tof.c
 )
 

@@ -7,3 +7,4 @@
 #include <stdbool.h>
 
 bool follow_line_step(void);
+void follow_line_reset(void);

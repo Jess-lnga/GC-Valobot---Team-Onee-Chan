@@ -18,6 +18,9 @@
 #define HEAD_LEVEL_2 2
 #define HEAD_LEVEL_3 3
 
+#define SERVO_HEAD_UP_US 1250
+#define SERVO_HEAD_LINE_US 1600
+
 
 //bool debug = false;
 
@@ -40,3 +43,7 @@ void look_down(int level);
 void turn_without_moving(int angle_us);
 void recenter(int previous_angle_us);
 void wake_up();
+bool servo_pose_step(const int coxa_us[4], const int troc_us[4], int head_us);
+bool servo_pose_step_speed(const int coxa_us[4], const int troc_us[4], int head_us,
+                           int step_us);
+void servo_reset_gait(void);

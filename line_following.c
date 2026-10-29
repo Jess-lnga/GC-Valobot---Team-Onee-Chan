@@ -94,6 +94,7 @@ static void follow_line_search_step(void)
 
 void follow_line_reset(void)
 {
+    g_mode = LINE_MODE_SEARCH;
     g_line_error = 0.0f;
     g_line_error_i = 0.0f;
     g_theta_r_cmd = 0.0f;

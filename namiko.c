@@ -4,6 +4,7 @@
 
 
 #include <stdio.h>
+#include <stdatomic.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/stdio_usb.h"
@@ -12,11 +13,13 @@
 #include "ov7670.h"
 #include "frame_find_line.h"
 #include "frame_find_target.h"
+#include "frame_find_ball.h"
 #include "labyrinthe.h"
 #include "pca9685.h"
 #include "line_following.h"
 #include "tof.h"
 #include "imu.h"
+#include "interactive.h"
 
 #define LINE_FOLLOWING_MODE         0
 #define RISING_SLOPE_MODE           1
@@ -29,6 +32,8 @@
 #define GOING_TO_SPYKE_MODE         8
 #define FINISHING_MODE              9
 #define REST_MODE                   10
+#define IMU_DEBUG_MODE              11
+#define IDLE_MODE                   12
 
 #define RISING_SLOPE_ANGLE_THRESHOLD_DEG  14.0f
 #define MIDDLE_SLOPE_ANGLE_THRESHOLD_DEG  3.0f
@@ -39,7 +44,7 @@ static volatile bool g_imu_ready = false;
 
 static bool debug = true;
 
-static int gc_valobot_mode = LINE_FOLLOWING_MODE; 
+static volatile int gc_valobot_mode = LINE_FOLLOWING_MODE;
 /* 
 0 = line following, 
 1 = rising_slope, 
@@ -53,7 +58,9 @@ static int gc_valobot_mode = LINE_FOLLOWING_MODE;
 9 = finishing 
 */  
 
-static bool ready_to_use_cam = false;
+static volatile bool ready_to_use_cam = false;
+static atomic_bool interactive_line_active = false;
+static atomic_bool interactive_frame_ready = false;
 static bool line_following_init = true;
 
 
@@ -61,7 +68,6 @@ static bool line_following_init = true;
 
 #define RISING_SLOPE_COUNT_THRESHOLD 5
 int rising_slope_count = 0;
-
 
 static void core1_entry(void) {
     ///////////// SERVO CORE - INITIALIZATION /////////////
@@ -79,6 +85,7 @@ static void core1_entry(void) {
         sleep_ms(50);
     }
 
+    interactive_init();
     ready_to_use_cam = true;
 
     ///////////////////////////////////////////////////////
@@ -110,7 +117,7 @@ static void core1_entry(void) {
             imu_capture();
             float pitch = get_mean_pitch();
 
-            if(abs(pitch) < MIDDLE_SLOPE_ANGLE_THRESHOLD_DEG){
+            if(fabsf(pitch) < MIDDLE_SLOPE_ANGLE_THRESHOLD_DEG){
                 gc_valobot_mode = MIDDLE_SLOPE_MODE;
             }
 
@@ -179,6 +186,38 @@ static void core1_entry(void) {
         if(gc_valobot_mode == FINISHING_MODE){
             sleep_ms(5000);
         }
+
+        if(gc_valobot_mode == IMU_DEBUG_MODE){
+            debug = false;
+            // ANSI : colonne 1, puis effacement de toute la ligne courante.
+            printf("\033[1G\033[2K");
+            if (!g_imu_ready) {
+                printf("IMU : echec de l'initialisation");
+            } else if (imu_capture()) {
+                printf("Pitch = %+7.2f deg | Roll = %+7.2f deg",
+                       get_instant_pitch(), get_instant_roll());
+            } else {
+                printf("IMU : mesure indisponible");
+            }
+            fflush(stdout);
+            sleep_ms(100);
+        }
+
+
+        if(gc_valobot_mode == IDLE_MODE){
+            interactive_line_active = interactive_step(time_us_64() / 1000,
+                                                       g_imu_ready, g_tof_ready,
+                                                       interactive_frame_ready);
+            if (!interactive_line_active) interactive_frame_ready = false;
+            sleep_ms(20);
+        }
+
+        if(gc_valobot_mode == REST_MODE){
+            sleep_ms(5000);
+
+        }
+
+
     }
 }
 
@@ -202,8 +241,9 @@ static void init_all(void) {
     //gc_valobot_mode = SHOOTING_MODE;
     //gc_valobot_mode = RISING_SLOPE_MODE;
     //gc_valobot_mode = LABYRINTHE_MODE;
-    //gc_valobot_mode = REST_MODE;
-    gc_valobot_mode = LABYRINTHE_TRANSITION_MODE;
+    //gc_valobot_mode = IMU_DEBUG_MODE;
+    gc_valobot_mode = IDLE_MODE;
+    //gc_valobot_mode = LABYRINTHE_TRANSITION_MODE;
 
     multicore_launch_core1(core1_entry);
 }
@@ -215,9 +255,12 @@ int main() {
 
     while (true) {
         if(ready_to_use_cam){
-            if((gc_valobot_mode == LINE_FOLLOWING_MODE)&&(!line_following_init)){
+            if (((gc_valobot_mode == LINE_FOLLOWING_MODE) && !line_following_init) ||
+                ((gc_valobot_mode == IDLE_MODE) && interactive_line_active)) {
                 ov7670_capture_frame(frame);
                 find_line_pos(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+                if (gc_valobot_mode == IDLE_MODE && interactive_line_active)
+                    interactive_frame_ready = true;
                 
                 if(debug){
                     ov7670_send_frame_usb(frame);  
@@ -230,7 +273,7 @@ int main() {
                 if(debug){
                     ov7670_send_frame_usb(frame);  
                 }
-                
+
                 find_line_pos_and_detect_t_shape(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
                 
                           
@@ -239,6 +282,15 @@ int main() {
             if(gc_valobot_mode == SHOOTING_MODE){
                 ov7670_capture_frame(frame);
                 find_targets(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
+                
+                if(debug){
+                    ov7670_send_frame_usb(frame);  
+                }          
+            }
+
+            if(gc_valobot_mode == IDLE_MODE){
+                ov7670_capture_frame(frame);
+                find_ball(frame, OV7670_IMG_WIDTH, OV7670_IMG_HEIGHT);
                 
                 if(debug){
                     ov7670_send_frame_usb(frame);  

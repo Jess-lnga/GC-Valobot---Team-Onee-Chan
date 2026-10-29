@@ -38,6 +38,7 @@
 
 static int servo_offset[16] = {0};
 static int servo_angle_us[16] = {0};
+static int servo_command_ticks[16] = {0};
 
 // --------------Variables for FSM------------------ //
 #define RISE_LEFT_TROC      0
@@ -53,13 +54,13 @@ static int servo_angle_us[16] = {0};
 #define RIGHT_SIDE          1
 
 #define HEAD_MAX_TICKS 2000
-#define HEAD_MIN_TICKS 1100
+#define HEAD_MIN_TICKS SERVO_HEAD_UP_US
 
 #define HEAD_POS_US_0       2000
 #define HEAD_POS_US_1       1800
-#define HEAD_POS_US_2       1600
+#define HEAD_POS_US_2       SERVO_HEAD_LINE_US
 #define HEAD_POS_US_3       1400
-#define HEAD_POS_UP_US      1100
+#define HEAD_POS_UP_US      SERVO_HEAD_UP_US
 
 #define HEAD_MVMNT_STEPS    40
 
@@ -141,7 +142,43 @@ static void pca_write_pwm(uint8_t channel, uint16_t on, uint16_t off){
     }
 
     servo_angle_us[channel] = servo_offset[channel] + to_us_ticks(off, us_par_tick);
+    servo_command_ticks[channel] = off;
     pca_write_pwm_offset(channel, on, off, to_ticks_us(servo_offset[channel], us_par_tick));
+}
+
+// Un pas de rampe, sans attente. Ordre des pattes : FL, FR, BL, BR.
+// Une cible negative laisse le servo concerne dans sa position courante.
+bool servo_pose_step(const int coxa_us[4], const int troc_us[4], int head_us) {
+    return servo_pose_step_speed(coxa_us, troc_us, head_us, 10);
+}
+
+bool servo_pose_step_speed(const int coxa_us[4], const int troc_us[4], int head_us,
+                           int step_us) {
+    const uint8_t channels[9] = {COXA_FL, COXA_FR, COXA_BL, COXA_BR,
+                                TROC_FL, TROC_FR, TROC_BL, TROC_BR, HEAD_SERVO};
+    bool reached = true;
+    for (int i = 0; i < 9; ++i) {
+        int target_us = i < 4 ? coxa_us[i] : (i < 8 ? troc_us[i - 4] : head_us);
+        if (target_us < 0) continue;
+        uint8_t ch = channels[i];
+        int target = to_ticks_us(target_us, us_par_tick);
+        int current = servo_command_ticks[ch];
+        if (step_us < 1) step_us = 1;
+        int step = to_ticks_us(step_us, us_par_tick);
+        if (step < 1) step = 1;
+        if (current == 0) current = target; // Premier signal : position physique inconnue.
+        if (target > current + step) { current += step; reached = false; }
+        else if (target < current - step) { current -= step; reached = false; }
+        else current = target;
+        pca_write_pwm(ch, 0, (uint16_t)current);
+    }
+    return reached;
+}
+
+void servo_reset_gait(void) {
+    _state = RISE_LEFT_TROC;
+    _moved_side = LEFT_SIDE;
+    initialize = true;
 }
 
 /// ////////////////////////////////////////////////////////////////////////// ///
